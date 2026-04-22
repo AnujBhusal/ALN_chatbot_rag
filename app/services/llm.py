@@ -1,9 +1,10 @@
 
-from typing import List, Dict
+from typing import List, Dict, Tuple
 import os
 import requests
 import logging
 import time
+import re
 
 # Set up logger first
 logger = logging.getLogger(__name__)
@@ -48,6 +49,8 @@ class LLMService:
 
     def build_prompt(self, query: str, context: str, history: List[Dict[str, str]]) -> str:
         """Combine query, context, and history into a single prompt."""
+        context = self._clean_text(context)
+
         # Keep history short for better results
         recent_history = history[-3:] if len(history) > 3 else history
         history_text = "\n".join([f"{h['role']}: {h['message']}" for h in recent_history])
@@ -78,6 +81,91 @@ Answer:"""
         
         # Use enhanced fallback
         return self._enhanced_fallback_response(prompt)
+
+    def _extract_prompt_parts(self, prompt: str) -> Tuple[str, str]:
+        """Extract context and question segments from the formatted prompt."""
+        context = ""
+        question = ""
+
+        context_match = re.search(r"Context:\s*(.*?)\s*Chat History:", prompt, flags=re.DOTALL)
+        question_match = re.search(r"Question:\s*(.*?)\s*Answer:\s*$", prompt, flags=re.DOTALL)
+
+        if context_match:
+            context = context_match.group(1).strip()
+        if question_match:
+            question = question_match.group(1).strip()
+
+        return context, question
+
+    def _clean_text(self, text: str) -> str:
+        """Normalize whitespace-heavy OCR/PDF text into readable prose."""
+        try:
+            repaired = text.encode("latin-1", errors="ignore").decode("utf-8", errors="replace")
+            if repaired and repaired.count("â") < text.count("â"):
+                text = repaired
+        except Exception:
+            pass
+
+        replacements = {
+            "â€™": "'",
+            "â€œ": '"',
+            "â€\x9d": '"',
+            "â€“": "-",
+            "â€”": "-",
+            "â€": '"',
+            "â": "",
+        }
+        for bad, good in replacements.items():
+            text = text.replace(bad, good)
+
+        # Fix remaining patterns like Nepalâs -> Nepal's.
+        text = re.sub(r"â([A-Za-z])", r"'\1", text)
+        text = re.sub(r"\sâ\s", " - ", text)
+
+        # Collapse spaced-out line breaks common in extracted PDFs.
+        text = re.sub(r"\n\s*\n+", " ", text)
+        text = re.sub(r"\s+", " ", text)
+        return text.strip()
+
+    def _extractive_summary(self, text: str, question: str, max_sentences: int = 4, max_chars: int = 650) -> str:
+        """Create a small extractive summary from context when APIs are unavailable."""
+        clean = self._clean_text(text)
+        if not clean:
+            return "I could not find enough document context to summarize."
+
+        sentences = re.split(r"(?<=[.!?])\s+", clean)
+        sentences = [s.strip() for s in sentences if len(s.strip()) > 30]
+
+        if not sentences:
+            return clean[:450] + ("..." if len(clean) > 450 else "")
+
+        question_tokens = set(re.findall(r"[a-zA-Z]{3,}", question.lower()))
+        stop = {
+            "about", "this", "that", "from", "with", "what", "when", "where", "which",
+            "have", "has", "were", "they", "them", "their", "into", "than", "then",
+        }
+        question_tokens = {t for t in question_tokens if t not in stop}
+
+        scored = []
+        for i, sentence in enumerate(sentences):
+            tokens = set(re.findall(r"[a-zA-Z]{3,}", sentence.lower()))
+            overlap = len(tokens & question_tokens)
+            # Prefer earlier sentences for "what is this document about" style questions.
+            position_bonus = max(0, 3 - i)
+            score = overlap * 3 + position_bonus
+            scored.append((score, i, sentence))
+
+        # Keep chronological flow by sorting selected sentences by original index.
+        top = sorted(sorted(scored, key=lambda x: x[0], reverse=True)[:max_sentences], key=lambda x: x[1])
+        summary = " ".join([s for _, _, s in top]).strip()
+
+        if len(summary) < 80:
+            summary = clean[:500] + ("..." if len(clean) > 500 else "")
+
+        if len(summary) > max_chars:
+            summary = summary[:max_chars].rsplit(" ", 1)[0].strip() + "..."
+
+        return summary
 
     def _call_cohere_api(self, prompt: str) -> str:
         """Call Cohere API with current available models."""
@@ -178,174 +266,35 @@ Answer:"""
             return None
 
     def _fallback_response(self, prompt: str) -> str:
-        """Generate a basic fallback response by extracting context."""
-        try:
-            # Extract context from prompt
-            if "Context:" in prompt:
-                context_part = prompt.split("Context:")[1].split("Question:")[0].strip()
-            elif "context" in prompt.lower():
-                lines = prompt.split('\n')
-                context_lines = [line for line in lines if len(line.strip()) > 10][:5]
-                context_part = " ".join(context_lines)
-            else:
-                context_part = prompt[:500]
-            
-            # Try to extract meaningful information
-            if context_part:
-                return f"Based on the provided information: {context_part[:300]}..."
-            else:
-                return "I understand your question, but I'm unable to generate a detailed response at the moment. The system is working on processing your request."
-                
-        except Exception:
-            return "I understand your question, but I'm unable to generate a detailed response at the moment."
+        """Provide a concise fallback response when model APIs are unavailable."""
+        context, question = self._extract_prompt_parts(prompt)
+        clean_context = self._clean_text(context)
 
-    def _enhanced_fallback_response(self, prompt: str) -> str:
-        """Generate an enhanced fallback response with better context extraction."""
-        try:
-            # Extract key information from the prompt
-            query = ""
-            context = ""
-            
-            # Parse prompt structure
-            if "Question:" in prompt:
-                parts = prompt.split("Question:")
-                if len(parts) > 1:
-                    query = parts[-1].strip()
-                    context = parts[0].strip()
-            elif "Context:" in prompt:
-                parts = prompt.split("Context:")
-                if len(parts) > 1:
-                    context_section = parts[1]
-                    if "Question:" in context_section:
-                        context_parts = context_section.split("Question:")
-                        context = context_parts[0].strip()
-                        query = context_parts[1].strip() if len(context_parts) > 1 else ""
-                    else:
-                        context = context_section.strip()
-            else:
-                # Fallback parsing
-                lines = prompt.split('\n')
-                context_lines = [line for line in lines if len(line.strip()) > 20]
-                context = " ".join(context_lines[:3])
-                query = lines[-1] if lines else ""
-            
-            # Generate intelligent response
-            if context and len(context.strip()) > 50:
-                # Extract key entities and topics from context
-                words = context.lower().split()
-                key_topics = [word for word in words if len(word) > 5 and word.isalpha()][:10]
-                
-                if "entity" in query.lower() or "entities" in query.lower():
-                    # Special handling for entity questions
-                    entities = []
-                    for line in context.split('\n'):
-                        if any(indicator in line.lower() for indicator in ['name:', 'title:', 'id:', 'type:', 'table:', 'entity']):
-                            entities.append(line.strip())
-                    
-                    if entities:
-                        return f"Based on the document, I can identify the following entities: {', '.join(entities[:5])}. {context[:200]}..."
-                
-                return f"Based on the available information: {context[:400]}... The document contains information about {', '.join(key_topics[:3])} and related topics."
-            else:
-                return "I can see your question but I'm currently unable to access the full LLM capabilities. The system has processed your query and found relevant information, but cannot provide a detailed analysis at this moment."
-                
-        except Exception as e:
-            logger.error(f"Error in enhanced fallback: {e}")
-            return "I understand your question and have found relevant information, but I'm unable to provide a detailed response at the moment."
+        if clean_context and len(clean_context) > 40:
+            summary = self._extractive_summary(clean_context, question)
+            return f"Here is a summary based on the uploaded document: {summary}"
 
-    def _fallback_response(self, prompt: str) -> str:
-        """Provide a fallback response when LLM API is unavailable."""
-        # Try to extract context from the prompt to give a better response
-        lines = prompt.split('\n')
-        context_lines = []
-        question = ""
-        
-        # Extract context and question from prompt
-        in_context = False
-        for line in lines:
-            if line.startswith('Context:'):
-                in_context = True
-                continue
-            elif line.startswith('Question:'):
-                question = line.replace('Question:', '').strip()
-                break
-            elif line.startswith('Chat History:') or line.startswith('Answer:'):
-                in_context = False
-            elif in_context and line.strip():
-                context_lines.append(line.strip())
-        
-        context_text = ' '.join(context_lines)
-        
-        # If we have context, try to provide a relevant response
-        if context_text and len(context_text) > 20:
-            # Simple keyword-based response generation
-            if any(word in question.lower() for word in ['interest', 'hobby', 'like', 'enjoy']):
-                return f"Based on the document provided, I can see information about your background. However, the LLM service is currently unavailable for detailed analysis. The document contains: {context_text[:200]}..."
-            elif any(word in question.lower() for word in ['skill', 'experience', 'work', 'job']):
-                return f"From the uploaded document, I can see details about your professional background. The LLM service is currently unavailable, but the document mentions: {context_text[:200]}..."
-            elif any(word in question.lower() for word in ['education', 'study', 'degree', 'university']):
-                return f"Based on your document, I can see educational information. Unfortunately, the LLM service is unavailable for detailed responses, but the document contains: {context_text[:200]}..."
-            else:
-                return f"I found relevant information in your document: {context_text[:300]}... However, the LLM service is currently unavailable for detailed analysis."
-        
-        # Original fallback logic
         if "booking" in prompt.lower():
             return "I can help you with booking appointments. Please provide your name, email, date, and time."
-        elif "document" in prompt.lower():
-            return "Based on the uploaded documents, I can provide information. However, the LLM service is currently unavailable."
-        else:
-            return "I understand your question, but I'm currently unable to provide a detailed response due to service limitations."
+
+        return "I could not find enough document context to answer that clearly right now."
 
     def _enhanced_fallback_response(self, prompt: str) -> str:
-        """Generate an enhanced fallback response with better context extraction."""
+        """Generate a higher quality fallback response from retrieved context."""
         try:
-            # Extract key information from the prompt
-            query = ""
-            context = ""
-            
-            # Parse prompt structure
-            if "Question:" in prompt:
-                parts = prompt.split("Question:")
-                if len(parts) > 1:
-                    query = parts[-1].strip()
-                    context = parts[0].strip()
-            elif "Context:" in prompt:
-                parts = prompt.split("Context:")
-                if len(parts) > 1:
-                    context_section = parts[1]
-                    if "Question:" in context_section:
-                        context_parts = context_section.split("Question:")
-                        context = context_parts[0].strip()
-                        query = context_parts[1].strip() if len(context_parts) > 1 else ""
-                    else:
-                        context = context_section.strip()
-            else:
-                # Fallback parsing
-                lines = prompt.split('\n')
-                context_lines = [line for line in lines if len(line.strip()) > 20]
-                context = " ".join(context_lines[:3])
-                query = lines[-1] if lines else ""
-            
-            # Generate intelligent response
-            if context and len(context.strip()) > 50:
-                # Extract key entities and topics from context
-                words = context.lower().split()
-                key_topics = [word for word in words if len(word) > 5 and word.isalpha()][:10]
-                
-                if "entity" in query.lower() or "entities" in query.lower():
-                    # Special handling for entity questions
-                    entities = []
-                    for line in context.split('\n'):
-                        if any(indicator in line.lower() for indicator in ['name:', 'title:', 'id:', 'type:', 'table:', 'entity']):
-                            entities.append(line.strip())
-                    
-                    if entities:
-                        return f"Based on the document, I can identify the following entities: {', '.join(entities[:5])}. {context[:200]}..."
-                
-                return f"Based on the available information: {context[:400]}... The document contains information about {', '.join(key_topics[:3])} and related topics."
-            else:
-                return "I can see your question but I'm currently unable to access the full LLM capabilities. The system has processed your query and found relevant information, but cannot provide a detailed analysis at this moment."
-                
+            context, question = self._extract_prompt_parts(prompt)
+            clean_context = self._clean_text(context)
+
+            if clean_context and len(clean_context) > 40:
+                summary = self._extractive_summary(clean_context, question)
+
+                if any(term in question.lower() for term in ["what is this pdf about", "what is this document about", "summary", "summarize"]):
+                    return f"This document is about: {summary}"
+
+                return f"Based on the retrieved document context: {summary}"
+
+            return "I could not find enough matching document context to answer that. Please try a more specific question."
+
         except Exception as e:
             logger.error(f"Error in enhanced fallback: {e}")
-            return "I understand your question and have found relevant information, but I'm unable to provide a detailed response at the moment."
+            return self._fallback_response(prompt)

@@ -2,6 +2,7 @@ from fastapi import APIRouter, UploadFile, File, Form, Depends, HTTPException
 from sqlalchemy.orm import Session
 from typing import List
 import os
+import re
 
 from app.services.chunking import ChunkingService
 from app.services.embeddings import EmbeddingService
@@ -34,6 +35,37 @@ def extract_text_from_file(file: UploadFile) -> str:
         raise HTTPException(status_code=400, detail="Only .pdf and .txt files are supported.")
 
 
+def normalize_extracted_text(text: str) -> str:
+    """Clean noisy whitespace produced by PDF extraction."""
+    # Repair common UTF-8 -> Latin-1 mojibake sequences (e.g., â€™).
+    try:
+        repaired = text.encode("latin-1", errors="ignore").decode("utf-8", errors="replace")
+        if repaired and repaired.count("â") < text.count("â"):
+            text = repaired
+    except Exception:
+        pass
+
+    replacements = {
+        "â€™": "'",
+        "â€œ": '"',
+        "â€\x9d": '"',
+        "â€“": "-",
+        "â€”": "-",
+        "â€": '"',
+        "â": "",
+    }
+    for bad, good in replacements.items():
+        text = text.replace(bad, good)
+
+    # Fix remaining patterns like Nepalâs -> Nepal's.
+    text = re.sub(r"â([A-Za-z])", r"'\1", text)
+    text = re.sub(r"\sâ\s", " - ", text)
+
+    text = re.sub(r"\n\s*\n+", " ", text)
+    text = re.sub(r"\s+", " ", text)
+    return text.strip()
+
+
 @router.post("/upload")
 async def upload_document(
     file: UploadFile = File(...),
@@ -44,7 +76,7 @@ async def upload_document(
     Upload a document, chunk it, generate embeddings, and store in DB + Qdrant.
     """
     # Step 1: Extract text
-    text: str = extract_text_from_file(file)
+    text: str = normalize_extracted_text(extract_text_from_file(file))
     if not text.strip():
         raise HTTPException(status_code=400, detail="Uploaded file is empty.")
 
