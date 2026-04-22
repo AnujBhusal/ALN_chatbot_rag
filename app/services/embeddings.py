@@ -1,108 +1,77 @@
-# app/services/embeddings.py
 from dotenv import load_dotenv
 import os
 from typing import List
 import requests
 import logging
 import hashlib
-import json
 
 logger = logging.getLogger(__name__)
 load_dotenv()
 
 class EmbeddingService:
-    def __init__(self, model_name: str = "embed-english-v3.0") -> None:
-        self.model_name = model_name
-        self.embedding_dim = 1024  # Cohere embedding dimension
-        
-        # Check if we should use Cohere
-        self.use_cohere = os.getenv("USE_COHERE", "false").lower() == "true"
-        self.cohere_api_key = os.getenv("COHERE_API_KEY")
-        
-        if self.use_cohere and self.cohere_api_key:
-            self.cohere_url = "https://api.cohere.ai/v1/embed"
-            self.headers = {
-                "Authorization": f"Bearer {self.cohere_api_key}",
-                "Content-Type": "application/json"
-            }
-            logger.info(f"Using Cohere API for embeddings: {model_name}")
+    def __init__(self, model_name: str | None = None) -> None:
+        self.model_name = model_name or os.getenv("EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L6-v2")
+        self.embedding_dim = 384
+
+        self.use_hf = os.getenv("USE_HF", "false").lower() == "true"
+        self.hf_api_key = os.getenv("HF_API_KEY", "")
+
+        self.use_ollama = os.getenv("USE_OLLAMA", "false").lower() == "true"
+        self.ollama_url = os.getenv("OLLAMA_URL", "http://localhost:11434").rstrip("/")
+        self.ollama_embedding_model = os.getenv("OLLAMA_EMBEDDING_MODEL", "nomic-embed-text")
+
+        if self.use_hf and self.hf_api_key:
+            self.hf_url = f"https://api-inference.huggingface.co/models/{self.model_name}"
+            self.hf_headers = {"Authorization": f"Bearer {self.hf_api_key}"}
+            logger.info(f"Using HuggingFace API for embeddings: {self.model_name}")
         else:
-            # Fallback to HuggingFace
-            self.use_huggingface = os.getenv("HF_API_KEY") is not None
-            if self.use_huggingface:
-                self.hf_api_key = os.getenv("HF_API_KEY")
-                self.hf_url = f"https://api-inference.huggingface.co/models/sentence-transformers/all-MiniLM-L6-v2"
-                self.hf_headers = {"Authorization": f"Bearer {self.hf_api_key}"}
-                logger.info("Using HuggingFace API for embeddings (Cohere disabled)")
-            else:
-                logger.info("Using hash-based embeddings (no API keys provided)")
+            self.hf_url = ""
+            self.hf_headers = {}
+
+        if self.use_ollama:
+            logger.info(f"Ollama embeddings enabled with model: {self.ollama_embedding_model}")
 
     def embed_texts(self, texts: List[str]) -> List[List[float]]:
         """Generate embeddings for a list of texts."""
         if not texts:
             return []
-        
-        if self.use_cohere and self.cohere_api_key:
-            return self._embed_with_cohere(texts)
-        elif hasattr(self, 'use_huggingface') and self.use_huggingface:
-            return self._embed_with_huggingface(texts)
-        else:
-            return self._embed_with_hash(texts)
 
-    def _embed_with_cohere(self, texts: List[str]) -> List[List[float]]:
-        """Generate embeddings using Cohere API."""
+        if self.use_ollama:
+            embeddings = self._embed_with_ollama(texts)
+            if embeddings:
+                return embeddings
+
+        if self.use_hf and self.hf_api_key:
+            return self._embed_with_huggingface(texts)
+
+        return self._embed_with_hash(texts)
+
+    def _embed_with_ollama(self, texts: List[str]) -> List[List[float]]:
+        """Generate embeddings using Ollama /api/embeddings endpoint."""
+        embeddings: List[List[float]] = []
         try:
-            # Clean and prepare texts
-            cleaned_texts = [text.strip()[:2048] for text in texts if text.strip()]
-            
-            # Try different Cohere models
-            models_to_try = ["embed-english-v3.0", "embed-english-v2.0", "embed-english-light-v3.0"]
-            
-            for model in models_to_try:
-                try:
-                    payload = {
-                        "texts": cleaned_texts,
-                        "model": model,
-                        "input_type": "search_document",  # Optimized for RAG
-                        "truncate": "END"
-                    }
-                    
-                    response = requests.post(
-                        self.cohere_url,
-                        headers=self.headers,
-                        json=payload,
-                        timeout=30
-                    )
-                    
-                    if response.status_code == 200:
-                        result = response.json()
-                        embeddings = result.get("embeddings", [])
-                        
-                        if embeddings and len(embeddings) == len(cleaned_texts):
-                            logger.info(f"Generated {len(embeddings)} embeddings via Cohere {model}")
-                            return embeddings
-                        else:
-                            logger.warning(f"Invalid embeddings response from {model}")
-                    
-                    elif response.status_code == 429:  # Rate limit
-                        logger.warning(f"Rate limit hit with {model}, waiting...")
-                        import time
-                        time.sleep(2)
-                        continue
-                    else:
-                        logger.warning(f"Cohere API error with {model}: {response.status_code} - {response.text}")
-                        
-                except Exception as model_error:
-                    logger.warning(f"Error with Cohere model {model}: {model_error}")
-                    continue
-            
-            # All Cohere models failed
-            logger.warning("All Cohere models failed, falling back to hash embeddings")
-            return self._embed_with_hash(texts)
-            
+            for text in texts:
+                response = requests.post(
+                    f"{self.ollama_url}/api/embeddings",
+                    json={"model": self.ollama_embedding_model, "prompt": text},
+                    timeout=20,
+                )
+                if response.status_code != 200:
+                    logger.warning(f"Ollama embedding error: {response.status_code} - {response.text}")
+                    return []
+
+                vector = response.json().get("embedding", [])
+                if not vector:
+                    return []
+                embeddings.append(vector)
+
+            if embeddings:
+                self.embedding_dim = len(embeddings[0])
+                logger.info(f"Generated {len(embeddings)} embeddings via Ollama")
+            return embeddings
         except Exception as e:
-            logger.error(f"Error with Cohere API: {e}, falling back to hash embeddings")
-            return self._embed_with_hash(texts)
+            logger.warning(f"Error with Ollama embeddings: {e}")
+            return []
 
     def _embed_with_huggingface(self, texts: List[str]) -> List[List[float]]:
         """Generate embeddings using HuggingFace API."""
@@ -116,8 +85,12 @@ class EmbeddingService:
             
             if response.status_code == 200:
                 embeddings = response.json()
-                logger.info(f"Generated {len(embeddings)} embeddings via HuggingFace API")
-                return embeddings
+                if isinstance(embeddings, list) and embeddings and isinstance(embeddings[0], list):
+                    self.embedding_dim = len(embeddings[0])
+                    logger.info(f"Generated {len(embeddings)} embeddings via HuggingFace API")
+                    return embeddings
+                logger.warning("Unexpected HuggingFace embedding response shape, falling back")
+                return self._embed_with_hash(texts)
             else:
                 logger.warning(f"HuggingFace API error: {response.status_code}, falling back to hash embeddings")
                 return self._embed_with_hash(texts)
@@ -142,7 +115,7 @@ class EmbeddingService:
                 embedding.append(value)
             
             # Pad or truncate to desired dimension
-            target_dim = 1024 if self.use_cohere else 384  # Match API dimensions
+            target_dim = self.embedding_dim
             while len(embedding) < target_dim:
                 embedding.extend(embedding[:min(len(embedding), target_dim - len(embedding))])
             

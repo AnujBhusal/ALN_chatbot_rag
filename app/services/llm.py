@@ -1,51 +1,53 @@
 
-from typing import List, Dict, Tuple
-import os
-import requests
+from typing import Dict, List, Optional, Tuple
 import logging
-import time
+import os
 import re
 
-# Set up logger first
+import requests
+
 logger = logging.getLogger(__name__)
 
 try:
-    import cohere
-    COHERE_AVAILABLE = True
+    from groq import Groq
 except ImportError:
-    COHERE_AVAILABLE = False
-    logger.warning("Cohere library not installed. Install with: pip install cohere")
+    Groq = None
 
-# Cohere API configuration
-COHERE_API_KEY = os.getenv("COHERE_API_KEY")
-USE_COHERE = os.getenv("USE_COHERE", "false").lower() == "true"
 
-# HuggingFace fallback configuration
-HF_API_KEY = os.getenv("HF_API_KEY")
+def _env_flag(name: str, default: bool = False) -> bool:
+    value = os.getenv(name, str(default)).strip().lower()
+    return value in {"1", "true", "yes", "on"}
 
 class LLMService:
-    """Handles LLM prompts and responses with Cohere and HuggingFace fallback."""
+    """Handles LLM calls with Groq/Ollama/HuggingFace and fallback summarization."""
 
     def __init__(self):
-        if USE_COHERE and COHERE_API_KEY and COHERE_AVAILABLE:
-            # Initialize Cohere client with current working models
-            self.cohere_client = cohere.Client(api_key=COHERE_API_KEY)
-            self.cohere_headers = {
-                "Authorization": f"Bearer {COHERE_API_KEY}",
-                "Content-Type": "application/json"
-            }
-            self.use_cohere = True
-            logger.info(f"LLM Service initialized with Cohere API client")
-        else:
-            self.use_cohere = False
-            
-        # Always initialize HF headers for fallback
-        if HF_API_KEY:
-            self.hf_headers = {"Authorization": f"Bearer {HF_API_KEY}"}
-            logger.info(f"LLM Service initialized with HuggingFace API fallback")
-        else:
-            self.hf_headers = None
-            logger.warning("No API keys available, using fallback responses only")
+        self.use_groq = _env_flag("USE_GROQ", default=True)
+        self.use_ollama = _env_flag("USE_OLLAMA", default=False)
+        self.use_hf = _env_flag("USE_HF", default=False)
+
+        self.groq_api_key = os.getenv("GROQ_API_KEY", "")
+        self.groq_model = os.getenv("GROQ_MODEL") or os.getenv("LLM_MODEL") or "mixtral-8x7b-32768"
+
+        self.ollama_url = os.getenv("OLLAMA_URL", "http://localhost:11434").rstrip("/")
+        self.ollama_model = os.getenv("OLLAMA_MODEL") or os.getenv("LLM_MODEL") or "mistral"
+
+        self.hf_api_key = os.getenv("HF_API_KEY", "")
+
+        self.groq_client = None
+        if self.use_groq and self.groq_api_key and Groq is not None:
+            self.groq_client = Groq(api_key=self.groq_api_key)
+            logger.info("LLM Service initialized with Groq provider")
+        elif self.use_groq and Groq is None:
+            logger.warning("Groq provider enabled but groq package is missing")
+
+        self.hf_headers = None
+        if self.use_hf and self.hf_api_key:
+            self.hf_headers = {"Authorization": f"Bearer {self.hf_api_key}"}
+            logger.info("LLM Service initialized with HuggingFace provider")
+
+        if not any([self.groq_client, self.use_ollama, self.hf_headers]):
+            logger.warning("No LLM providers configured. Falling back to extractive responses.")
 
     def build_prompt(
         self,
@@ -75,19 +77,22 @@ Answer:"""
         return prompt
 
     def call_llm(self, prompt: str) -> str:
-        """Call LLM API with Cohere priority and HuggingFace fallback."""
-        if self.use_cohere:
-            response = self._call_cohere_api(prompt)
+        """Call configured LLM providers in priority order and return best response."""
+        if self.groq_client:
+            response = self._call_groq_api(prompt)
             if response:
                 return response
-        
-        # Try HuggingFace fallback
-        if HF_API_KEY and self.hf_headers:
+
+        if self.use_ollama:
+            response = self._call_ollama_api(prompt)
+            if response:
+                return response
+
+        if self.hf_headers:
             response = self._call_huggingface_api(prompt)
             if response:
                 return response
-        
-        # Use enhanced fallback
+
         return self._enhanced_fallback_response(prompt)
 
     def _extract_prompt_parts(self, prompt: str) -> Tuple[str, str]:
@@ -175,78 +180,66 @@ Answer:"""
 
         return summary
 
-    def _call_cohere_api(self, prompt: str) -> str:
-        """Call Cohere API with current available models."""
-        try:
-            # Current working models (as of Sept 2025)
-            models_to_try = [
-                "command-nightly",          # Fast and working
-                "command-a-03-2025",        # Latest flagship
-                "command-r7b-12-2024",      # Reliable option
-                "c4ai-aya-expanse-8b",      # Open source option
-                "command-r-08-2024",        # Stable release
-            ]
-            
-            for model_name in models_to_try:
-                try:
-                    response = self._cohere_chat_api(prompt, model_name)
-                    if response and len(response.strip()) > 10:
-                        logger.info(f"Successfully generated response using Cohere {model_name}")
-                        return response.strip()
-                        
-                except Exception as model_error:
-                    logger.warning(f"Error with Cohere {model_name}: {model_error}")
-                    continue
-            
-            return None
-            
-        except Exception as e:
-            logger.error(f"Error calling Cohere API: {e}")
+    def _call_groq_api(self, prompt: str) -> Optional[str]:
+        """Call Groq chat completion API."""
+        if not self.groq_client:
             return None
 
-    def _cohere_chat_api(self, prompt: str, model: str) -> str:
-        """Call Cohere's Chat API using the official client."""
         try:
-            response = self.cohere_client.chat(
-                message=prompt,
-                model=model,
-                temperature=0.7,
-                max_tokens=300
+            response = self.groq_client.chat.completions.create(
+                model=self.groq_model,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=0.3,
+                max_tokens=350,
             )
-            
-            return response.text.strip() if response.text else None
-            
+            message = response.choices[0].message.content if response.choices else None
+            if message and len(message.strip()) > 10:
+                return message.strip()
         except Exception as e:
-            # Check if it's a rate limit error
-            if "rate limit" in str(e).lower() or "429" in str(e):
-                logger.warning(f"Cohere rate limit hit with {model}")
-                time.sleep(2)
-                return None
-            else:
-                logger.warning(f"Error with Cohere {model}: {e}")
+            logger.warning(f"Groq call failed for model {self.groq_model}: {e}")
+        return None
+
+    def _call_ollama_api(self, prompt: str) -> Optional[str]:
+        """Call local or remote Ollama server for completion."""
+        try:
+            response = requests.post(
+                f"{self.ollama_url}/api/generate",
+                json={
+                    "model": self.ollama_model,
+                    "prompt": prompt,
+                    "stream": False,
+                    "options": {"temperature": 0.3},
+                },
+                timeout=30,
+            )
+            if response.status_code != 200:
+                logger.warning(f"Ollama API error: {response.status_code} - {response.text}")
                 return None
 
-    def _cohere_generate_api(self, prompt: str, model: str) -> str:
-        """Generate API was removed September 15, 2025. Use chat API instead."""
-        logger.warning("Generate API is deprecated, using chat API instead")
-        return self._cohere_chat_api(prompt, model)
+            result = response.json()
+            output = (result.get("response") or "").strip()
+            if len(output) > 10:
+                return output
+        except Exception as e:
+            logger.warning(f"Ollama call failed for model {self.ollama_model}: {e}")
+        return None
 
-    def _call_huggingface_api(self, prompt: str) -> str:
+    def _call_huggingface_api(self, prompt: str) -> Optional[str]:
         """Call HuggingFace API as fallback."""
         if not self.hf_headers:
             return None
             
         try:
             models_to_try = [
-                "microsoft/DialoGPT-medium",
-                "facebook/blenderbot-400M-distill",
-                "google/flan-t5-base"
+                os.getenv("LLM_MODEL", "google/flan-t5-base"),
+                "google/flan-t5-base",
+                "mistralai/Mistral-7B-Instruct-v0.2",
             ]
             
             for model_name in models_to_try:
                 try:
                     model_url = f"https://api-inference.huggingface.co/models/{model_name}"
-                    payload = {"inputs": prompt[-500:]}
+                    payload = {"inputs": prompt[-600:]}
                     
                     response = requests.post(
                         model_url,
@@ -258,10 +251,10 @@ Answer:"""
                     if response.status_code == 200:
                         result = response.json()
                         if isinstance(result, list) and len(result) > 0:
-                            generated_text = result[0].get("generated_text", "")
-                            if len(generated_text.strip()) > 10:
+                            generated_text = result[0].get("generated_text", "").strip()
+                            if len(generated_text) > 10:
                                 logger.info(f"Successfully generated response using HuggingFace {model_name}")
-                                return generated_text.replace(prompt[-500:], "").strip()
+                                return generated_text.replace(prompt[-600:], "").strip() or generated_text
                     
                 except Exception as model_error:
                     logger.warning(f"Error with HuggingFace {model_name}: {model_error}")
