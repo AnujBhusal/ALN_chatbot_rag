@@ -1,17 +1,18 @@
-# RAG Backend API
+# ALN Internal AI Assistant
 
-A robust Retrieval-Augmented Generation (RAG) backend built with FastAPI, supporting document ingestion, conversational AI, and interview booking functionality.
+A FastAPI-based internal AI assistant for Accountability Lab Nepal (ALN), supporting document ingestion, structured document-type-aware retrieval, conversational AI, and interview booking functionality.
 
 ## Features
 
 ### 🚀 Core Functionality
-- **Document Ingestion API**: Upload PDF/TXT files with intelligent text extraction and chunking
-- **Conversational RAG API**: Multi-turn conversations with document context and Redis-based memory
+- **Document Ingestion API**: Upload PDF/TXT files with intelligent text extraction, chunking, and ALN metadata tagging
+- **Conversational RAG API**: Multi-turn conversations with document context, Redis-based memory, and metadata-aware retrieval
 - **Interview Booking API**: Schedule interviews with validation and storage
 - **Two Chunking Strategies**: Sentence-based and sliding window with overlap
 - **Vector Storage**: Qdrant integration for semantic search
 - **Chat Memory**: Redis-powered conversation history
 - **Database**: PostgreSQL for metadata and booking storage
+- **Frontend**: Minimal React + Tailwind chat UI
 
 ### 🛠️ Technology Stack
 - **Backend**: FastAPI with async support
@@ -71,6 +72,11 @@ Content-Type: multipart/form-data
 
 file: <PDF or TXT file>
 chunk_strategy: "sentence" | "sliding"
+document_type: "donor_proposal" | "integrity_icon" | "governance_weekly" | "internal_policy" | "meeting_notes" | "general" (optional)
+title: string (optional)
+year: number (optional)
+program_name: string (optional)
+donor_name: string (optional)
 ```
 
 ### Conversational Chat
@@ -80,7 +86,29 @@ Content-Type: application/json
 
 {
   "session_id": "unique_session_id",
-  "query": "Your question about the documents"
+  "query": "Your question about the documents",
+  "role": "staff",
+  "document_type": "donor_proposal"
+}
+```
+
+### Chat Response
+```json
+{
+  "answer": "...",
+  "sources": [
+    {
+      "title": "2023 Integrity Icon Nominations",
+      "type": "integrity_icon",
+      "year": 2023,
+      "snippet": "..."
+    }
+  ],
+  "document_context": {
+    "id": 12,
+    "title": "2023 Integrity Icon Nominations",
+    "type": "integrity_icon"
+  }
 }
 ```
 
@@ -121,6 +149,18 @@ docker-compose up -d postgres redis qdrant
 
 # Run FastAPI app locally
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+```
+
+### Run the Frontend
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+Set the backend URL if needed:
+```bash
+$env:VITE_API_BASE_URL="http://localhost:8000"
 ```
 
 ## Testing

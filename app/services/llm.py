@@ -47,7 +47,13 @@ class LLMService:
             self.hf_headers = None
             logger.warning("No API keys available, using fallback responses only")
 
-    def build_prompt(self, query: str, context: str, history: List[Dict[str, str]]) -> str:
+    def build_prompt(
+        self,
+        query: str,
+        context: str,
+        history: List[Dict[str, str]],
+        system_instruction: str | None = None,
+    ) -> str:
         """Combine query, context, and history into a single prompt."""
         context = self._clean_text(context)
 
@@ -55,7 +61,9 @@ class LLMService:
         recent_history = history[-3:] if len(history) > 3 else history
         history_text = "\n".join([f"{h['role']}: {h['message']}" for h in recent_history])
         
-        prompt = f"""You are a helpful assistant. Use the provided context to answer the question accurately.
+        instruction_block = system_instruction or "You are a helpful assistant. Use the provided context to answer the question accurately."
+
+        prompt = f"""{instruction_block}
 
 Context: {context[:1500]}
 

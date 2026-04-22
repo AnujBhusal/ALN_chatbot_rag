@@ -1,6 +1,8 @@
-from typing import List, Dict, Any
+from typing import List, Dict, Any, Optional
+from urllib.parse import urlparse
+import os
 from qdrant_client import QdrantClient
-from qdrant_client.http.models import PointStruct, VectorParams, Distance
+from qdrant_client.http.models import PointStruct, VectorParams, Distance, Filter
 from qdrant_client.http.exceptions import UnexpectedResponse, ResponseHandlingException
 import logging
 import time
@@ -11,8 +13,14 @@ class VectorStoreService:
     """Handles storing and querying embeddings in Qdrant."""
 
     def __init__(self, host: str = "localhost", port: int = 6333, collection_name: str = "documents"):
-        self.host = host
-        self.port = port
+        qdrant_url = os.getenv("QDRANT_URL")
+        if qdrant_url:
+            parsed_url = urlparse(qdrant_url)
+            self.host = parsed_url.hostname or host
+            self.port = parsed_url.port or port
+        else:
+            self.host = host
+            self.port = port
         self.collection_name = collection_name
         self.client = None
         self._collection_ensured = False
@@ -105,7 +113,7 @@ class VectorStoreService:
         except Exception as e:
             logger.error(f"Error upserting embeddings: {e}")
 
-    def query(self, embedding: List[float], top_k: int = 5) -> List[Dict[str, Any]]:
+    def query(self, embedding: List[float], top_k: int = 5, query_filter: Optional[Filter] = None) -> List[Dict[str, Any]]:
         """Query the vector store for similar documents."""
         if not self._ensure_connected():
             logger.warning("Qdrant not available, returning empty results")
@@ -115,7 +123,8 @@ class VectorStoreService:
             result = self.client.search(
                 collection_name=self.collection_name, 
                 query_vector=embedding, 
-                limit=top_k
+                limit=top_k,
+                query_filter=query_filter,
             )
             logger.info(f"Retrieved {len(result)} results from vector store")
             return [{"id": p.id, "score": p.score, "metadata": p.payload} for p in result]

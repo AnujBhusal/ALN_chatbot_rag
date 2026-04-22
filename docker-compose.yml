@@ -56,6 +56,8 @@ services:
       - REDIS_HOST=redis
       - REDIS_PORT=6379
       - QDRANT_URL=http://qdrant:6333
+      - USE_COHERE=${USE_COHERE:-true}
+      - COHERE_API_KEY=${COHERE_API_KEY:-}
       - HF_API_KEY=${HF_API_KEY:-}
       - EMBEDDING_MODEL=sentence-transformers/all-MiniLM-L6-v2
       - LLM_MODEL=microsoft/DialoGPT-medium
