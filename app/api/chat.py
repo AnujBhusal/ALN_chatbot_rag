@@ -36,6 +36,7 @@ llm = LLMService()
 class QueryRequest(BaseModel):
     session_id: str
     query: str
+    mode: str = Field(default="general", pattern="^(general|documents)$")
     document_id: Optional[int] = None
     use_latest_document: bool = True
     role: str = Field(default="staff", pattern="^(admin|staff)$")
@@ -97,24 +98,10 @@ def _is_general_knowledge_query(query: str) -> bool:
     return not has_document_pattern
 
 
-def _general_fallback_response(query: str) -> str:
-    normalized = query.lower().strip()
-    if "accountability lab nepal" in normalized:
-        return (
-            "Accountability Lab Nepal is the Nepal chapter of Accountability Lab, "
-            "a civic innovation organization that supports accountability through active citizens, "
-            "responsible leadership, and stronger public institutions."
-        )
-
-    return (
-        "I can answer general questions as well as ALN document-based questions. "
-        "Ask me anything, and I will switch between conversational and evidence-backed modes as needed."
-    )
-
-
 def _lookup_wikipedia_answer(query: str) -> Optional[str]:
     """Try to answer an open-domain question using Wikipedia search + summary."""
     try:
+        headers = {"User-Agent": "ALN-Assistant/1.0 (GeneralKnowledgeLookup)"}
         search_response = requests.get(
             "https://en.wikipedia.org/w/api.php",
             params={
@@ -124,6 +111,7 @@ def _lookup_wikipedia_answer(query: str) -> Optional[str]:
                 "format": "json",
                 "srlimit": 1,
             },
+            headers=headers,
             timeout=10,
         )
         search_response.raise_for_status()
@@ -138,6 +126,7 @@ def _lookup_wikipedia_answer(query: str) -> Optional[str]:
 
         summary_response = requests.get(
             f"https://en.wikipedia.org/api/rest_v1/page/summary/{quote(title)}",
+            headers=headers,
             timeout=10,
         )
         summary_response.raise_for_status()
@@ -149,6 +138,46 @@ def _lookup_wikipedia_answer(query: str) -> Optional[str]:
         return extract.strip()
     except Exception as error:
         logger.debug(f"Wikipedia lookup failed for query '{query}': {error}")
+        return None
+
+
+def _lookup_duckduckgo_answer(query: str) -> Optional[str]:
+    """Fallback open-domain lookup using DuckDuckGo Instant Answer API."""
+    try:
+        response = requests.get(
+            "https://api.duckduckgo.com/",
+            params={
+                "q": query,
+                "format": "json",
+                "no_html": 1,
+                "skip_disambig": 1,
+                "no_redirect": 1,
+            },
+            timeout=10,
+            headers={"User-Agent": "ALN-Assistant/1.0 (GeneralKnowledgeLookup)"},
+        )
+        response.raise_for_status()
+        data = response.json()
+
+        abstract = (data.get("AbstractText") or "").strip()
+        if abstract:
+            return abstract
+
+        related = data.get("RelatedTopics") or []
+        for item in related:
+            text = (item.get("Text") or "").strip() if isinstance(item, dict) else ""
+            if text:
+                return text
+            topics = item.get("Topics") if isinstance(item, dict) else None
+            if isinstance(topics, list):
+                for sub_item in topics:
+                    sub_text = (sub_item.get("Text") or "").strip() if isinstance(sub_item, dict) else ""
+                    if sub_text:
+                        return sub_text
+
+        return None
+    except Exception as error:
+        logger.debug(f"DuckDuckGo lookup failed for query '{query}': {error}")
         return None
 
 
@@ -247,6 +276,7 @@ async def chat_query(request: QueryRequest, db: Session = Depends(get_db)) -> Qu
 
     intent = detect_intent(request.query)
     requested_document_type = request.document_type or intent.document_type
+    force_general_mode = request.mode == "general"
 
     if intent.is_small_talk and requested_document_type is None and request.document_id is None:
         answer = _small_talk_response(request.query)
@@ -254,7 +284,9 @@ async def chat_query(request: QueryRequest, db: Session = Depends(get_db)) -> Qu
         memory.add_message(request.session_id, "assistant", answer)
         return QueryResponse(answer=answer, sources=[], document_context=None)
 
-    if _is_general_knowledge_query(request.query) and requested_document_type is None and request.document_id is None:
+    if (
+        force_general_mode or _is_general_knowledge_query(request.query)
+    ) and requested_document_type is None and request.document_id is None:
         history = memory.get_history(request.session_id)
 
         wikipedia_answer = _lookup_wikipedia_answer(request.query)
@@ -263,19 +295,13 @@ async def chat_query(request: QueryRequest, db: Session = Depends(get_db)) -> Qu
             memory.add_message(request.session_id, "assistant", wikipedia_answer)
             return QueryResponse(answer=wikipedia_answer, sources=[], document_context=None)
 
-        general_prompt = llm.build_prompt(
-            request.query,
-            "",
-            history,
-            system_instruction=(
-                "You are a helpful conversational assistant. Answer clearly and naturally. "
-                "You may use general knowledge when the user is not requesting ALN document retrieval."
-            ),
-        )
-        answer = llm.call_llm(general_prompt)
+        duckduckgo_answer = _lookup_duckduckgo_answer(request.query)
+        if duckduckgo_answer:
+            memory.add_message(request.session_id, "user", request.query)
+            memory.add_message(request.session_id, "assistant", duckduckgo_answer)
+            return QueryResponse(answer=duckduckgo_answer, sources=[], document_context=None)
 
-        if "could not find enough" in answer.lower() or "not available in aln documents" in answer.lower():
-            answer = _general_fallback_response(request.query)
+        answer = llm.answer_general_question(request.query, history)
 
         memory.add_message(request.session_id, "user", request.query)
         memory.add_message(request.session_id, "assistant", answer)

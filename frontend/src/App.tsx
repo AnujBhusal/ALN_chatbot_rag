@@ -55,6 +55,30 @@ function documentsPath(baseUrl: string): string {
   return `${cleaned}/chat/documents?role=staff`
 }
 
+function formatDocumentType(type: string): string {
+  return type
+    .split('_')
+    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
+    .join(' ')
+}
+
+function cleanSnippet(snippet: string): string {
+  return snippet.replace(/\s+/g, ' ').trim()
+}
+
+function buildReferenceTags(sources: Source[] | undefined, limit = 3): string {
+  if (!sources || sources.length === 0) {
+    return ''
+  }
+
+  const tags = sources
+    .slice(0, limit)
+    .map((_, index) => `[Ref ${index + 1}]`)
+    .join(' ')
+
+  return tags ? `\n\n${tags}` : ''
+}
+
 export default function App() {
   const [messages, setMessages] = useState<Message[]>([
     {
@@ -148,9 +172,10 @@ export default function App() {
         body: JSON.stringify({
           session_id: sessionId,
           query,
+          mode,
           document_id: mode === 'documents' ? selectedDocumentId : null,
           document_type: null,
-          use_latest_document: mode === 'documents' ? false : true,
+          use_latest_document: mode === 'documents',
         }),
       })
 
@@ -160,10 +185,11 @@ export default function App() {
       }
 
       const data = (await response.json()) as ChatResponse
+      const referenceTags = buildReferenceTags(data.sources)
       const assistantMessage: Message = {
         id: `assistant-${Date.now()}`,
         role: 'assistant',
-        content: data.answer,
+        content: `${data.answer}${referenceTags}`,
         sources: data.sources,
       }
 
@@ -241,12 +267,23 @@ export default function App() {
               <p className="whitespace-pre-wrap text-sm leading-relaxed">{message.content}</p>
               {message.sources && message.sources.length > 0 ? (
                 <div className="mt-3 border-t border-white/10 pt-2 text-xs text-slate-200">
-                  <p className="mb-1 font-medium">Sources</p>
+                  <p className="mb-2 font-medium">References</p>
                   <ul className="space-y-1">
                     {message.sources.slice(0, 3).map((source, index) => (
-                      <li key={`${message.id}-source-${index}`}>
-                        {source.title} ({source.type}
-                        {source.year ? `, ${source.year}` : ''})
+                      <li
+                        key={`${message.id}-source-${index}`}
+                        className="rounded-lg border border-white/15 bg-slate-900/60 px-2 py-2"
+                      >
+                        <p className="font-medium text-slate-100">
+                          Ref {index + 1}: {source.title}
+                        </p>
+                        <p className="text-[11px] uppercase tracking-wide text-slate-300">
+                          {formatDocumentType(source.type)}
+                          {source.year ? ` • ${source.year}` : ''}
+                        </p>
+                        {source.snippet ? (
+                          <p className="mt-1 text-slate-300">"{cleanSnippet(source.snippet)}"</p>
+                        ) : null}
                       </li>
                     ))}
                   </ul>
