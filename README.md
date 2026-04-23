@@ -9,14 +9,14 @@ A FastAPI-based internal AI assistant for Accountability Lab Nepal (ALN), suppor
 - **Conversational RAG API**: Multi-turn conversations with document context, Redis-based memory, and metadata-aware retrieval
 - **Interview Booking API**: Schedule interviews with validation and storage
 - **Two Chunking Strategies**: Sentence-based and sliding window with overlap
-- **Vector Storage**: Qdrant integration for semantic search
+- **Vector Storage**: Pinecone integration for semantic search
 - **Chat Memory**: Redis-powered conversation history
 - **Database**: PostgreSQL for metadata and booking storage
 - **Frontend**: Minimal React + Tailwind chat UI
 
 ### 🛠️ Technology Stack
 - **Backend**: FastAPI with async support
-- **Vector Database**: Qdrant
+- **Vector Database**: Pinecone
 - **Session Store**: Redis
 - **Database**: PostgreSQL with SQLAlchemy ORM
 - **Embeddings**: Cohere API (embed-english-v3.0)
@@ -144,8 +144,8 @@ pip install -r requirements.txt
 
 ### Run Services Locally
 ```bash
-# Start databases only
-docker-compose up -d postgres redis qdrant
+# Start local dependencies
+docker-compose up -d postgres redis
 
 # Run FastAPI app locally
 uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
@@ -196,7 +196,7 @@ curl -X POST "http://localhost:8000/chat/query" \
 └─────────────────┘    └─────────────────┘    └─────────────────┘
          │                                              
          │              ┌─────────────────┐             
-         └──────────────│     Qdrant      │             
+         └──────────────│    Pinecone     │             
                         │ (Vector Store)  │             
                         └─────────────────┘             
 ```
@@ -213,7 +213,11 @@ curl -X POST "http://localhost:8000/chat/query" \
 | `DB_URL` | PostgreSQL connection string | `postgresql+psycopg2://postgres:postgres@localhost:5432/rag` |
 | `REDIS_HOST` | Redis server host | `localhost` |
 | `REDIS_PORT` | Redis server port | `6379` |
-| `QDRANT_URL` | Qdrant server URL | `http://localhost:6333` |
+| `PINECONE_API_KEY` | Pinecone API key | - |
+| `PINECONE_INDEX` | Pinecone index name | `documents` |
+| `PINECONE_REGION` | Pinecone region | `us-east-1` |
+| `PINECONE_CLOUD` | Pinecone cloud provider | `aws` |
+| `PINECONE_NAMESPACE` | Pinecone namespace | `default` |
 | `COHERE_API_KEY` | Cohere API key (required) | - |
 | `USE_COHERE` | Enable Cohere integration | `true` |
 | `HF_API_KEY` | HuggingFace API key (fallback) | - |
@@ -228,7 +232,7 @@ curl -X POST "http://localhost:8000/chat/query" \
 1. **Environment Variables**: Set production values in `.env`
 2. **Database**: Use managed PostgreSQL service
 3. **Redis**: Use managed Redis service  
-4. **Qdrant**: Consider Qdrant Cloud for production
+4. **Vector DB**: Use Pinecone serverless for production
 5. **Monitoring**: Add logging and health checks
 6. **Security**: Implement authentication/authorization
 
@@ -245,7 +249,7 @@ docker run -p 8000:8000 --env-file .env.prod rag-backend:prod
 
 ### Common Issues
 1. **Model Loading Errors**: Ensure sufficient disk space for SentenceTransformers models
-2. **Qdrant Connection**: Check if Qdrant service is running and accessible
+2. **Pinecone Connection**: Ensure `PINECONE_API_KEY`, index, and region are configured correctly
 3. **HuggingFace API**: Rate limits may cause delays; model loading takes time
 4. **PostgreSQL Connection**: Verify database is accessible and credentials are correct
 
@@ -254,8 +258,8 @@ docker run -p 8000:8000 --env-file .env.prod rag-backend:prod
 # Check service status
 curl http://localhost:8000/docs
 
-# Check Qdrant
-curl http://localhost:6333/health
+# Check app endpoint
+curl http://localhost:8000/docs
 
 # Check Redis
 docker exec -it rag_redis redis-cli ping

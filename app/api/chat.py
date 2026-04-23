@@ -6,7 +6,6 @@ from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
-from qdrant_client.http.models import FieldCondition, Filter, MatchValue
 from sqlalchemy.orm import Session
 import requests
 
@@ -239,33 +238,26 @@ def _build_context_from_documents(documents: List[models.Document], db: Session,
     return results
 
 
-def _build_query_filter(requested_document_type: Optional[str], role: str, year: Optional[int]) -> Optional[Filter]:
-    must_conditions: List[FieldCondition] = []
-    should_conditions: List[FieldCondition] = []
+def _build_query_filter(requested_document_type: Optional[str], role: str, year: Optional[int]) -> Optional[Dict[str, Any]]:
+    clauses: List[Dict[str, Any]] = []
 
     if requested_document_type:
-        must_conditions.append(FieldCondition(key="document_type", match=MatchValue(value=requested_document_type)))
+        clauses.append({"document_type": {"$eq": requested_document_type}})
 
     if year is not None:
-        must_conditions.append(FieldCondition(key="year", match=MatchValue(value=year)))
+        clauses.append({"year": {"$eq": year}})
 
     if role != "admin":
         allowed_types = accessible_document_types(role)
-        should_conditions = [
-            FieldCondition(key="document_type", match=MatchValue(value=document_type))
-            for document_type in allowed_types
-        ]
+        clauses.append({"document_type": {"$in": allowed_types}})
 
-    if not must_conditions and not should_conditions:
+    if not clauses:
         return None
 
-    if should_conditions and not must_conditions:
-        return Filter(should=should_conditions)
+    if len(clauses) == 1:
+        return clauses[0]
 
-    if should_conditions:
-        return Filter(must=must_conditions, should=should_conditions)
-
-    return Filter(must=must_conditions)
+    return {"$and": clauses}
 
 
 @router.post("/query", response_model=QueryResponse)

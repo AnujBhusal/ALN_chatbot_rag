@@ -93,7 +93,7 @@ async def upload_document(
     db: Session = Depends(get_db),
 ) -> dict:
     """
-    Upload a document, chunk it, generate embeddings, and store in DB + Qdrant.
+    Upload a document, chunk it, generate embeddings, and store in DB + Pinecone.
     """
     # Step 1: Extract text
     text: str = normalize_extracted_text(extract_text_from_file(file))
@@ -143,7 +143,7 @@ async def upload_document(
     # Step 5: Generate embeddings
     embeddings: List[List[float]] = embedder.embed_texts(chunks)
 
-    # Step 6: Store embeddings in Qdrant with metadata
+    # Step 6: Store embeddings in Pinecone with metadata
     metadatas = [
         {
             "document_id": document.id,
