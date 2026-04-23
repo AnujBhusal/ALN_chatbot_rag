@@ -25,18 +25,15 @@ app = FastAPI(
     redoc_url="/redoc"
 )
 
-# Add CORS middleware - Allow frontend URLs
+# Add CORS middleware - Allow all origins for public API
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "https://aln-chatbot-rag.vercel.app",  # Production frontend
-        "http://localhost:5173",  # Local development (Vite)
-        "http://localhost:3000",  # Local development (alternative)
-        "http://127.0.0.1:5173",  # Local development (127.0.0.1)
-    ],
-    allow_credentials=False,  # Must be False with allow_origins list
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_origins=["*"],  # Allow all origins (public API)
+    allow_credentials=False,
+    allow_methods=["*"],  # Allow all HTTP methods
+    allow_headers=["*"],  # Allow all headers
+    expose_headers=["*"],
+    max_age=600,
 )
 
 # Initialize DB
