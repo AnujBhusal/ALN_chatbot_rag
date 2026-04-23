@@ -281,18 +281,7 @@ async def chat_query(request: QueryRequest, db: Session = Depends(get_db)) -> Qu
     ) and requested_document_type is None and request.document_id is None:
         history = memory.get_history(request.session_id)
 
-        wikipedia_answer = _lookup_wikipedia_answer(request.query)
-        if wikipedia_answer:
-            memory.add_message(request.session_id, "user", request.query)
-            memory.add_message(request.session_id, "assistant", wikipedia_answer)
-            return QueryResponse(answer=wikipedia_answer, sources=[], document_context=None)
-
-        duckduckgo_answer = _lookup_duckduckgo_answer(request.query)
-        if duckduckgo_answer:
-            memory.add_message(request.session_id, "user", request.query)
-            memory.add_message(request.session_id, "assistant", duckduckgo_answer)
-            return QueryResponse(answer=duckduckgo_answer, sources=[], document_context=None)
-
+        # Skip Wikipedia/DuckDuckGo - go straight to LLM for better answers
         answer = llm.answer_general_question(request.query, history)
 
         memory.add_message(request.session_id, "user", request.query)
