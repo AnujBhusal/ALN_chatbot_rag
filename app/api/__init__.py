@@ -1,3 +1,3 @@
-from . import ingest, chat, booking
+from . import ingest, chat, booking, auth
 
-__all__ = ["ingest", "chat", "booking"]
+__all__ = ["ingest", "chat", "booking", "auth"]

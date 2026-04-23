@@ -4,7 +4,7 @@ import logging
 import sys
 
 from app.db.session import init_db
-from app.api import ingest, chat, booking
+from app.api import ingest, chat, booking, auth
 from app import config
 
 # Configure logging
@@ -55,6 +55,7 @@ except Exception as e:
 app.include_router(ingest.router, prefix="/api")
 app.include_router(chat.router, prefix="/api")
 app.include_router(booking.router, prefix="/api")
+app.include_router(auth.router, prefix="/api")
 
 @app.get("/")
 async def root():

@@ -9,6 +9,7 @@ from pydantic import BaseModel, Field
 from sqlalchemy.orm import Session
 import requests
 
+from app.api.auth import get_current_user_optional, get_current_user
 from app.db import models
 from app.db.session import get_db
 from app.services.embeddings import EmbeddingService
@@ -61,6 +62,17 @@ class FeedbackRequest(BaseModel):
     answer: str
     rating: str = Field(pattern="^(up|down)$")
     comment: Optional[str] = None
+
+
+class HistoryMessage(BaseModel):
+    session_id: str
+    role: str
+    message: str
+    created_at: Any
+
+
+class HistoryResponse(BaseModel):
+    messages: List[HistoryMessage]
 
 
 def _small_talk_response(query: str) -> str:
@@ -260,8 +272,41 @@ def _build_query_filter(requested_document_type: Optional[str], role: str, year:
     return {"$and": clauses}
 
 
+def _persist_user_chat(
+    db: Session,
+    user: Optional[models.User],
+    session_id: str,
+    user_message: str,
+    assistant_message: str,
+) -> None:
+    if not user:
+        return
+
+    db.add(
+        models.UserChatMessage(
+            user_id=user.id,
+            session_id=session_id,
+            role="user",
+            message=user_message,
+        )
+    )
+    db.add(
+        models.UserChatMessage(
+            user_id=user.id,
+            session_id=session_id,
+            role="assistant",
+            message=assistant_message,
+        )
+    )
+    db.commit()
+
+
 @router.post("/query", response_model=QueryResponse)
-async def chat_query(request: QueryRequest, db: Session = Depends(get_db)) -> QueryResponse:
+async def chat_query(
+    request: QueryRequest,
+    db: Session = Depends(get_db),
+    current_user: Optional[models.User] = Depends(get_current_user_optional),
+) -> QueryResponse:
     """Answer ALN queries with metadata-aware retrieval and grouped sources."""
     document_context = None
     target_document_ids: List[int] = []
@@ -274,6 +319,7 @@ async def chat_query(request: QueryRequest, db: Session = Depends(get_db)) -> Qu
         answer = _small_talk_response(request.query)
         memory.add_message(request.session_id, "user", request.query)
         memory.add_message(request.session_id, "assistant", answer)
+        _persist_user_chat(db, current_user, request.session_id, request.query, answer)
         return QueryResponse(answer=answer, sources=[], document_context=None)
 
     if (
@@ -286,6 +332,7 @@ async def chat_query(request: QueryRequest, db: Session = Depends(get_db)) -> Qu
 
         memory.add_message(request.session_id, "user", request.query)
         memory.add_message(request.session_id, "assistant", answer)
+        _persist_user_chat(db, current_user, request.session_id, request.query, answer)
         return QueryResponse(answer=answer, sources=[], document_context=None)
 
     if requested_document_type and not can_access_document_type(request.role, requested_document_type):
@@ -400,6 +447,7 @@ async def chat_query(request: QueryRequest, db: Session = Depends(get_db)) -> Qu
 
     memory.add_message(request.session_id, "user", request.query)
     memory.add_message(request.session_id, "assistant", answer)
+    _persist_user_chat(db, current_user, request.session_id, request.query, answer)
 
     return QueryResponse(
         answer=answer,
@@ -420,6 +468,33 @@ async def submit_feedback(payload: FeedbackRequest, db: Session = Depends(get_db
     db.commit()
     db.refresh(feedback)
     return {"message": "Feedback saved", "feedback_id": feedback.id}
+
+
+@router.get("/history", response_model=HistoryResponse)
+async def get_chat_history(
+    limit: int = Query(default=100, ge=1, le=500),
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> HistoryResponse:
+    messages = (
+        db.query(models.UserChatMessage)
+        .filter(models.UserChatMessage.user_id == current_user.id)
+        .order_by(models.UserChatMessage.created_at.desc())
+        .limit(limit)
+        .all()
+    )
+
+    payload = [
+        HistoryMessage(
+            session_id=message.session_id,
+            role=message.role,
+            message=message.message,
+            created_at=message.created_at,
+        )
+        for message in reversed(messages)
+    ]
+
+    return HistoryResponse(messages=payload)
 
 
 @router.get("/documents")
