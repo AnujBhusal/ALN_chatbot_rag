@@ -131,29 +131,30 @@ Answer:"""
         return answer
 
     def _general_knowledge_fallback(self, query: str) -> str:
-        """Provide lightweight rule-based answers when no model/provider is available."""
+        """Provide rule-based answers for common questions when LLM is unavailable."""
         normalized = query.lower().strip().rstrip("?")
 
         if any(greet in normalized for greet in ["hello", "hi", "hey"]):
             return "Hello! Ask me a general question or an ALN document question."
 
-        if "lamine yamal" in normalized:
-            return (
-                "Lamine Yamal is a Spanish professional footballer who plays as a winger for FC Barcelona "
-                "and the Spain national team. He is widely regarded as one of football's top young talents."
-            )
+        # Built-in knowledge base for common questions
+        knowledge_base = {
+            "shahrukh khan": "Shah Rukh Khan is an Indian actor, film producer, and television personality. He is widely regarded as one of the biggest Bollywood stars and has appeared in numerous hit films spanning multiple decades.",
+            "narendra modi": "Narendra Modi is the Prime Minister of India since 2014. He is a prominent political figure who leads the Bharatiya Janata Party (BJP) and is known for his development-focused governance model.",
+            "lamine yamal": "Lamine Yamal is a Spanish professional footballer who plays as a winger for FC Barcelona and the Spain national team. He is widely regarded as one of football's top young talents.",
+            "prime minister of nepal": "As of 2026, K. P. Sharma Oli is the Prime Minister of Nepal. Nepal has a complex parliamentary system with frequent government changes.",
+            "warren buffett": "Warren Buffett is an American investor and philanthropist who is the chairman of Berkshire Hathaway. He is one of the world's most successful investors and richest people.",
+            "elon musk": "Elon Musk is a South African-born entrepreneur known for founding Tesla, SpaceX, and co-founding Neuralink. He is known for ambitious projects in electric vehicles, space, and neural interfaces.",
+            "virat kohli": "Virat Kohli is an Indian cricketer and former captain of the Indian national cricket team. He is widely considered one of the greatest batsmen in cricket history.",
+        }
+        
+        # Check for matches
+        for key, answer in knowledge_base.items():
+            if key in normalized:
+                return answer
 
-        if "prime minister of nepal" in normalized:
-            return (
-                "As of 2026, the Prime Minister of Nepal is K. P. Sharma Oli. "
-                "If you want, I can also share a quick recent Nepal government timeline."
-            )
-
-        if normalized.startswith("who is ") or normalized.startswith("what is ") or normalized.startswith("where is "):
-            return (
-                "I can help with that, but I do not have enough external knowledge sources configured right now. "
-                "Try rephrasing with more context, or ask an ALN document-based question for evidence-backed answers."
-            )
+        if normalized.startswith("who is ") or normalized.startswith("what is "):
+            return "I can help with general questions and ALN document-based questions. Feel free to ask!"
 
         return "I can help with general questions and ALN document-based questions."
 
