@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, List, Optional
 from urllib.parse import quote
+from collections import OrderedDict
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel, Field
@@ -69,6 +70,29 @@ class HistoryMessage(BaseModel):
     role: str
     message: str
     created_at: Any
+
+
+class ConversationMessage(BaseModel):
+    role: str
+    message: str
+    created_at: Any
+
+
+class ConversationSummary(BaseModel):
+    session_id: str
+    message_count: int
+    first_message: str
+    created_at: Any
+    updated_at: Any
+
+
+class Conversation(BaseModel):
+    summary: ConversationSummary
+    messages: List[ConversationMessage]
+
+
+class GroupedHistoryResponse(BaseModel):
+    conversations: List[Conversation]
 
 
 class HistoryResponse(BaseModel):
@@ -470,31 +494,68 @@ async def submit_feedback(payload: FeedbackRequest, db: Session = Depends(get_db
     return {"message": "Feedback saved", "feedback_id": feedback.id}
 
 
-@router.get("/history", response_model=HistoryResponse)
+@router.get("/history", response_model=GroupedHistoryResponse)
 async def get_chat_history(
-    limit: int = Query(default=100, ge=1, le=500),
+    limit: int = Query(default=50, ge=1, le=500),
     current_user: models.User = Depends(get_current_user),
     db: Session = Depends(get_db),
-) -> HistoryResponse:
+) -> GroupedHistoryResponse:
+    """
+    Retrieve chat history grouped by session/conversation.
+    Returns recent conversations with full message history for each.
+    """
+    # Fetch messages for this user ordered by session and creation time
     messages = (
         db.query(models.UserChatMessage)
         .filter(models.UserChatMessage.user_id == current_user.id)
-        .order_by(models.UserChatMessage.created_at.desc())
-        .limit(limit)
+        .order_by(
+            models.UserChatMessage.session_id.desc(),
+            models.UserChatMessage.created_at.asc(),
+        )
         .all()
     )
 
-    payload = [
-        HistoryMessage(
-            session_id=message.session_id,
-            role=message.role,
-            message=message.message,
-            created_at=message.created_at,
-        )
-        for message in reversed(messages)
-    ]
+    # Group messages by session_id
+    from collections import OrderedDict
+    sessions_dict: Dict[str, List[models.UserChatMessage]] = OrderedDict()
+    for message in messages:
+        if message.session_id not in sessions_dict:
+            sessions_dict[message.session_id] = []
+        sessions_dict[message.session_id].append(message)
 
-    return HistoryResponse(messages=payload)
+    # Build conversation objects, limiting to most recent sessions
+    conversations: List[Conversation] = []
+    for session_id in reversed(list(sessions_dict.keys())[:limit]):
+        session_messages = sessions_dict[session_id]
+        if not session_messages:
+            continue
+
+        # Create summary
+        first_message = session_messages[0].message if session_messages else ""
+        created_at = session_messages[0].created_at
+        updated_at = session_messages[-1].created_at
+
+        summary = ConversationSummary(
+            session_id=session_id,
+            message_count=len(session_messages),
+            first_message=first_message[:100],  # Truncate for summary
+            created_at=created_at,
+            updated_at=updated_at,
+        )
+
+        # Build message list
+        conv_messages = [
+            ConversationMessage(
+                role=msg.role,
+                message=msg.message,
+                created_at=msg.created_at,
+            )
+            for msg in session_messages
+        ]
+
+        conversations.append(Conversation(summary=summary, messages=conv_messages))
+
+    return GroupedHistoryResponse(conversations=conversations)
 
 
 @router.get("/documents")

@@ -20,15 +20,29 @@ type Message = {
 }
 
 type HistoryMessage = {
-  session_id: string
   role: 'user' | 'assistant'
   message: string
   created_at: string
 }
 
-type HistoryResponse = {
+type ConversationSummary = {
+  session_id: string
+  message_count: number
+  first_message: string
+  created_at: string
+  updated_at: string
+}
+
+type Conversation = {
+  summary: ConversationSummary
   messages: HistoryMessage[]
 }
+
+type GroupedHistoryResponse = {
+  conversations: Conversation[]
+}
+
+type HistoryResponse = GroupedHistoryResponse
 
 type UserProfile = {
   id: number
@@ -146,7 +160,8 @@ export default function App() {
       content: 'Hello. Ask a question about ALN documents or a general topic.',
     },
   ])
-  const [historyMessages, setHistoryMessages] = useState<HistoryMessage[]>([])
+  const [historyMessages, setHistoryMessages] = useState<Conversation[]>([])
+  const [expandedSessions, setExpandedSessions] = useState<Set<string>>(new Set())
   const [input, setInput] = useState('')
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -181,8 +196,9 @@ export default function App() {
       throw new Error('Could not load chat history')
     }
 
-    const payload = (await response.json()) as HistoryResponse
-    setHistoryMessages(payload.messages)
+    const payload = (await response.json()) as GroupedHistoryResponse
+    setHistoryMessages([])
+    setHistoryMessages(payload.conversations)
   }
 
   useEffect(() => {
@@ -351,6 +367,16 @@ export default function App() {
         content: 'Hello. Ask a question about ALN documents or a general topic.',
       },
     ])
+  }
+
+  function toggleSessionExpanded(sessionId: string) {
+    const updated = new Set(expandedSessions)
+    if (updated.has(sessionId)) {
+      updated.delete(sessionId)
+    } else {
+      updated.add(sessionId)
+    }
+    setExpandedSessions(updated)
   }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -540,21 +566,54 @@ export default function App() {
           </div>
 
           <div className="rounded-xl border border-white/10 bg-slate-900/60 p-3">
-            <p className="mb-2 text-xs font-medium uppercase tracking-wide text-slate-300">Previous chats</p>
+            <p className="mb-2 text-xs font-medium uppercase tracking-wide text-slate-300">Previous chats ({Array.isArray(historyMessages) ? historyMessages.length : 0})</p>
             <div className="max-h-[55vh] space-y-2 overflow-y-auto pr-1">
-              {historyMessages.length > 0 ? (
-                historyMessages
-                  .slice()
-                  .reverse()
-                  .slice(0, 40)
-                  .map((item, index) => (
-                    <div key={`${item.session_id}-${index}`} className="rounded-lg border border-white/10 bg-slate-950/70 p-2">
-                      <p className="text-[10px] uppercase tracking-wide text-slate-400">
-                        {item.role} • {new Date(item.created_at).toLocaleString()}
-                      </p>
-                      <p className="mt-1 text-xs text-slate-200">{clip(item.message, 110)}</p>
+              {Array.isArray(historyMessages) && historyMessages.length > 0 ? (
+                historyMessages.map((conversation) => {
+                  const isExpanded = expandedSessions.has(conversation.summary.session_id)
+                  const formattedDate = new Date(conversation.summary.created_at).toLocaleDateString('en-US', {
+                    month: 'short',
+                    day: 'numeric',
+                    hour: '2-digit',
+                    minute: '2-digit',
+                  } as any)
+
+                  return (
+                    <div
+                      key={conversation.summary.session_id}
+                      className="rounded-lg border border-white/10 bg-slate-950/70"
+                    >
+                      <button
+                        type="button"
+                        onClick={() => toggleSessionExpanded(conversation.summary.session_id)}
+                        className="w-full px-3 py-2 text-left hover:bg-slate-900/50 transition"
+                      >
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="flex-1 min-w-0">
+                            <p className="text-[10px] uppercase tracking-wide text-slate-400 mb-1">
+                              {formattedDate} • {conversation.summary.message_count} messages
+                            </p>
+                            <p className="text-xs text-slate-200 truncate">{clip(conversation.summary.first_message, 100)}</p>
+                          </div>
+                          <span className="text-slate-400 flex-shrink-0 mt-0.5">
+                            {isExpanded ? '−' : '+'}
+                          </span>
+                        </div>
+                      </button>
+
+                      {isExpanded ? (
+                        <div className="border-t border-white/10 px-3 py-2 space-y-1 bg-slate-900/40 text-[11px]">
+                          {conversation.messages.map((message, idx) => (
+                            <div key={idx} className="py-1">
+                              <p className="text-slate-500 uppercase tracking-wide">{message.role}:</p>
+                              <p className="text-slate-300 mt-0.5">{clip(message.message, 140)}</p>
+                            </div>
+                          ))}
+                        </div>
+                      ) : null}
                     </div>
-                  ))
+                  )
+                })
               ) : (
                 <p className="text-xs text-slate-400">No chat history yet. Ask your first question.</p>
               )}
