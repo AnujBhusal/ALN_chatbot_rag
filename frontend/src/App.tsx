@@ -103,6 +103,14 @@ export default function App() {
   const sessionId = useMemo(() => getSessionId(), [])
 
   useEffect(() => {
+    if (mode !== 'documents') {
+      return
+    }
+
+    if (documents.length > 0) {
+      return
+    }
+
     let isMounted = true
 
     async function loadDocuments() {
@@ -137,7 +145,7 @@ export default function App() {
     return () => {
       isMounted = false
     }
-  }, [baseUrl])
+  }, [baseUrl, mode, documents.length])
 
   function resetSession() {
     const nextSession = createSessionId()
