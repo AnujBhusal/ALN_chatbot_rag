@@ -35,11 +35,20 @@ class LLMService:
         self.hf_api_key = os.getenv("HF_API_KEY", "")
 
         self.groq_client = None
+        
+        # Detailed logging for Groq initialization
+        logger.info(f"Groq init: use_groq={self.use_groq}, groq_api_key_present={bool(self.groq_api_key)}, Groq_class={Groq is not None}")
+        
         if self.use_groq and self.groq_api_key and Groq is not None:
-            self.groq_client = Groq(api_key=self.groq_api_key)
-            logger.info("LLM Service initialized with Groq provider")
+            try:
+                self.groq_client = Groq(api_key=self.groq_api_key)
+                logger.info(f"✅ LLM Service initialized with Groq provider (model={self.groq_model})")
+            except Exception as e:
+                logger.error(f"❌ Failed to initialize Groq client: {e}")
+        elif self.use_groq and not self.groq_api_key:
+            logger.warning("❌ Groq provider enabled but GROQ_API_KEY is missing")
         elif self.use_groq and Groq is None:
-            logger.warning("Groq provider enabled but groq package is missing")
+            logger.warning("❌ Groq provider enabled but groq package is missing")
 
         self.hf_headers = None
         if self.use_hf and self.hf_api_key:
@@ -47,7 +56,7 @@ class LLMService:
             logger.info("LLM Service initialized with HuggingFace provider")
 
         if not any([self.groq_client, self.use_ollama, self.hf_headers]):
-            logger.warning("No LLM providers configured. Falling back to extractive responses.")
+            logger.warning("⚠️  No LLM providers configured. Falling back to extractive responses.")
 
     def build_prompt(
         self,
@@ -79,20 +88,28 @@ Answer:"""
     def call_llm(self, prompt: str) -> str:
         """Call configured LLM providers in priority order and return best response."""
         if self.groq_client:
+            logger.debug("Attempting Groq API call...")
             response = self._call_groq_api(prompt)
             if response:
+                logger.info("✅ Got response from Groq")
                 return response
+            logger.warning("⚠️  Groq returned None, trying next provider")
 
         if self.use_ollama:
+            logger.debug("Attempting Ollama API call...")
             response = self._call_ollama_api(prompt)
             if response:
+                logger.info("✅ Got response from Ollama")
                 return response
 
         if self.hf_headers:
+            logger.debug("Attempting HuggingFace API call...")
             response = self._call_huggingface_api(prompt)
             if response:
+                logger.info("✅ Got response from HuggingFace")
                 return response
 
+        logger.warning("⚠️  All LLM providers failed, using fallback")
         return self._enhanced_fallback_response(prompt)
 
     def answer_general_question(self, query: str, history: Optional[List[Dict[str, str]]] = None) -> str:
@@ -235,9 +252,11 @@ Answer:"""
     def _call_groq_api(self, prompt: str) -> Optional[str]:
         """Call Groq chat completion API."""
         if not self.groq_client:
+            logger.error("❌ Groq client is not initialized")
             return None
 
         try:
+            logger.debug(f"Calling Groq API with model={self.groq_model}, prompt_len={len(prompt)}")
             response = self.groq_client.chat.completions.create(
                 model=self.groq_model,
                 messages=[{"role": "user", "content": prompt}],
@@ -246,9 +265,12 @@ Answer:"""
             )
             message = response.choices[0].message.content if response.choices else None
             if message and len(message.strip()) > 10:
+                logger.debug(f"✅ Groq returned {len(message)} chars")
                 return message.strip()
+            else:
+                logger.warning(f"⚠️  Groq returned short/empty response: {message}")
         except Exception as e:
-            logger.warning(f"Groq call failed for model {self.groq_model}: {e}")
+            logger.error(f"❌ Groq call failed for model {self.groq_model}: {type(e).__name__}: {e}")
         return None
 
     def _call_ollama_api(self, prompt: str) -> Optional[str]:
