@@ -5,6 +5,7 @@ import sys
 
 from app.db.session import init_db
 from app.api import ingest, chat, booking
+from app import config
 
 # Configure logging
 logging.basicConfig(
@@ -16,6 +17,12 @@ logging.basicConfig(
 )
 
 logger = logging.getLogger(__name__)
+
+# Log environment check
+logger.info(f"GROQ_API_KEY present: {bool(config.GROQ_API_KEY)}")
+logger.info(f"PINECONE_API_KEY present: {bool(config.PINECONE_API_KEY)}")
+logger.info(f"DB_URL present: {bool(config.DB_URL)}")
+logger.info(f"REDIS_URL present: {bool(config.REDIS_URL)}")
 
 app = FastAPI(
     title="RAG Backend API",
