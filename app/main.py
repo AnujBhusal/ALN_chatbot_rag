@@ -26,21 +26,17 @@ app = FastAPI(
 )
 
 # Add CORS middleware - Allow frontend URLs
-allowed_origins = [
-    "https://aln-chatbot-rag.vercel.app",  # Production frontend
-    "https://*.vercel.app",  # Vercel preview deployments
-    "http://localhost:5173",  # Local development (Vite)
-    "http://localhost:3000",  # Local development (alternative)
-    "http://127.0.0.1:5173",  # Local development (127.0.0.1)
-]
-
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=allowed_origins,
-    allow_credentials=True,
-    allow_methods=["GET", "POST", "PUT", "DELETE", "OPTIONS"],
+    allow_origins=[
+        "https://aln-chatbot-rag.vercel.app",  # Production frontend
+        "http://localhost:5173",  # Local development (Vite)
+        "http://localhost:3000",  # Local development (alternative)
+        "http://127.0.0.1:5173",  # Local development (127.0.0.1)
+    ],
+    allow_credentials=False,  # Must be False with allow_origins list
+    allow_methods=["*"],
     allow_headers=["*"],
-    max_age=3600,  # Cache preflight for 1 hour
 )
 
 # Initialize DB
