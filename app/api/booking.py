@@ -38,8 +38,12 @@ async def create_booking(request: BookingRequest, db: Session = Depends(get_db))
 
     # Optional: Check Redis if slot is already booked
     slot_key = f"booking:{request.date}:{request.time}"
-    if memory.redis_client.get(slot_key):
-        raise HTTPException(status_code=400, detail="Time slot already booked.")
+    if memory.redis_client:
+        try:
+            if memory.redis_client.get(slot_key):
+                raise HTTPException(status_code=400, detail="Time slot already booked.")
+        except Exception:
+            pass  # If Redis fails, continue anyway
 
     # Save in Postgres
     booking = models.Booking(name=request.name, email=request.email, datetime=dt)
@@ -47,7 +51,11 @@ async def create_booking(request: BookingRequest, db: Session = Depends(get_db))
     db.commit()
     db.refresh(booking)
 
-    # Save in Redis for quick lookup
-    memory.redis_client.set(slot_key, booking.id)
+    # Save in Redis for quick lookup (optional)
+    if memory.redis_client:
+        try:
+            memory.redis_client.set(slot_key, booking.id, ex=86400)
+        except Exception:
+            pass  # If Redis fails, continue anyway
 
     return BookingResponse(message="Booking confirmed", booking_id=booking.id)
