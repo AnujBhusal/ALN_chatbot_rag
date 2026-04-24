@@ -274,8 +274,13 @@ def _build_context_from_documents(documents: List[models.Document], db: Session,
     return results
 
 
-def _build_query_filter(requested_document_type: Optional[str], role: str, year: Optional[int]) -> Optional[Dict[str, Any]]:
+def _build_query_filter(requested_document_type: Optional[str], role: str, year: Optional[int], target_document_ids: Optional[List[int]] = None) -> Optional[Dict[str, Any]]:
     clauses: List[Dict[str, Any]] = []
+
+    if target_document_ids:
+        # Pinecone uses floats for numbers in json, but $in works properly
+        clauses.append({"document_id": {"$in": target_document_ids}})
+
 
     if requested_document_type:
         clauses.append({"document_type": {"$eq": requested_document_type}})
@@ -377,24 +382,23 @@ async def chat_query(
             document_context = _build_document_context(latest_document)
 
     query_embedding = embedder.embed_texts([request.query])[0]
-    query_filter = _build_query_filter(requested_document_type, request.role, intent.year)
+    query_filter = _build_query_filter(requested_document_type, request.role, intent.year, target_document_ids)
 
     top_k = 20 if intent.is_summary else 12
     results = vectorstore.query(query_embedding, top_k=top_k, query_filter=query_filter)
 
     # If year-specific filtering is too strict, retry without year while preserving role/doc-type constraints.
     if not results and intent.year is not None:
-        fallback_without_year_filter = _build_query_filter(requested_document_type, request.role, None)
+        fallback_without_year_filter = _build_query_filter(requested_document_type, request.role, None, target_document_ids)
         results = vectorstore.query(query_embedding, top_k=top_k, query_filter=fallback_without_year_filter)
 
     if target_document_ids:
-        filtered = [
+        # Force strict filtering just in case, and DO NOT fall back to other documents if empty.
+        results = [
             result
             for result in results
             if result.get("metadata", {}).get("document_id") in target_document_ids
         ]
-        if filtered:
-            results = filtered
 
     context = _build_context_blocks(results)
 
