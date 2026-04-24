@@ -391,15 +391,6 @@ export default function App() {
     ])
   }
 
-  function toggleSessionExpanded(sessionId: string) {
-    const updated = new Set(expandedSessions)
-    if (updated.has(sessionId)) {
-      updated.delete(sessionId)
-    } else {
-      updated.add(sessionId)
-    }
-    setExpandedSessions(updated)
-  }
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
