@@ -12,6 +12,13 @@ class EmbeddingService:
     def __init__(self, model_name: str | None = None) -> None:
         self.model_name = model_name or os.getenv("EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L6-v2")
         self.embedding_dim = 384
+        self.local_model = None
+        try:
+            from sentence_transformers import SentenceTransformer  # type: ignore
+            self.local_model = SentenceTransformer(self.model_name)
+            logger.info(f"Loaded local SentenceTransformer: {self.model_name}")
+        except Exception as e:
+            logger.warning(f"Could not load local model: {e}")
 
         self.use_hf = os.getenv("USE_HF", "false").lower() == "true"
         self.hf_api_key = os.getenv("HF_API_KEY", "")
@@ -35,6 +42,11 @@ class EmbeddingService:
         """Generate embeddings for a list of texts."""
         if not texts:
             return []
+
+        if self.local_model:
+            embeddings = self.local_model.encode(texts).tolist()
+            self.embedding_dim = len(embeddings[0]) if embeddings else self.embedding_dim
+            return embeddings
 
         if self.use_ollama:
             embeddings = self._embed_with_ollama(texts)

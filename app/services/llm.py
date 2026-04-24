@@ -27,7 +27,7 @@ class LLMService:
         self.use_hf = _env_flag("USE_HF", default=False)
 
         self.groq_api_key = os.getenv("GROQ_API_KEY", "")
-        self.groq_model = os.getenv("GROQ_MODEL") or os.getenv("LLM_MODEL") or "mixtral-8x7b-32768"
+        self.groq_model = os.getenv("GROQ_MODEL") or "llama3-8b-8192"
 
         self.ollama_url = os.getenv("OLLAMA_URL", "http://localhost:11434").rstrip("/")
         self.ollama_model = os.getenv("OLLAMA_MODEL") or os.getenv("LLM_MODEL") or "mistral"
@@ -76,7 +76,7 @@ class LLMService:
 
         prompt = f"""{instruction_block}
 
-Context: {context[:1500]}
+Context: {context[:4000]}
 
 Chat History:
 {history_text}
@@ -262,7 +262,7 @@ Answer:"""
                 model=self.groq_model,
                 messages=[{"role": "user", "content": prompt}],
                 temperature=0.3,
-                max_tokens=350,
+                max_tokens=1024,
             )
             message = response.choices[0].message.content if response.choices else None
             if message and len(message.strip()) > 10:
