@@ -71,15 +71,20 @@ function createSessionId(): string {
   return `session-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`
 }
 
-function getSessionId(): string {
+function getOrCreateSessionId(): string {
   const saved = localStorage.getItem(SESSION_STORAGE_KEY)
-  if (saved) {
-    return saved
-  }
-
+  if (saved) return saved
   const created = createSessionId()
   localStorage.setItem(SESSION_STORAGE_KEY, created)
   return created
+}
+
+function historyToMessages(conversation: Conversation): Message[] {
+  return conversation.messages.map((m, i) => ({
+    id: `history-${conversation.summary.session_id}-${i}`,
+    role: m.role,
+    content: m.message,
+  }))
 }
 
 function getSavedToken(): string {
@@ -161,7 +166,6 @@ export default function App() {
     },
   ])
   const [historyMessages, setHistoryMessages] = useState<Conversation[]>([])
-  const [expandedSessions, setExpandedSessions] = useState<Set<string>>(new Set())
   const [input, setInput] = useState('')
   const [isLoading, setIsLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -177,13 +181,16 @@ export default function App() {
   const [password, setPassword] = useState('')
   const [authLoading, setAuthLoading] = useState(false)
   const [authError, setAuthError] = useState<string | null>(null)
+  // Session management
+  const [currentSessionId, setCurrentSessionId] = useState<string>(() => getOrCreateSessionId())
+  const [activeSessionId, setActiveSessionId] = useState<string>(() => getOrCreateSessionId())
 
   const baseUrl = useMemo(() => {
     const fromEnv = import.meta.env.VITE_API_BASE_URL as string | undefined
     return fromEnv && fromEnv.trim() ? fromEnv : 'http://localhost:8000/api'
   }, [])
 
-  const sessionId = useMemo(() => getSessionId(), [])
+  const isViewingHistory = activeSessionId !== currentSessionId
 
   async function loadHistory(authToken: string) {
     const response = await fetch(historyPath(baseUrl), {
@@ -289,10 +296,25 @@ export default function App() {
     }
   }, [baseUrl, mode, documents.length, user])
 
-  function resetSession() {
+  function startNewChat() {
     const nextSession = createSessionId()
     localStorage.setItem(SESSION_STORAGE_KEY, nextSession)
-    window.location.reload()
+    setCurrentSessionId(nextSession)
+    setActiveSessionId(nextSession)
+    setMessages([
+      {
+        id: 'welcome',
+        role: 'assistant',
+        content: 'Hello. Ask a question about ALN documents or a general topic.',
+      },
+    ])
+    setError(null)
+  }
+
+  function resumeSession(conversation: Conversation) {
+    setActiveSessionId(conversation.summary.session_id)
+    setMessages(historyToMessages(conversation))
+    setError(null)
   }
 
   async function handleAuthSubmit(event: FormEvent<HTMLFormElement>) {
@@ -385,6 +407,11 @@ export default function App() {
     if (!query || isLoading || !token) {
       return
     }
+    // If sending a message to a past session, adopt it as current too
+    if (isViewingHistory) {
+      setCurrentSessionId(activeSessionId)
+      localStorage.setItem(SESSION_STORAGE_KEY, activeSessionId)
+    }
 
     const userMessage: Message = {
       id: `user-${Date.now()}`,
@@ -405,7 +432,7 @@ export default function App() {
           Authorization: `Bearer ${token}`,
         },
         body: JSON.stringify({
-          session_id: sessionId,
+          session_id: activeSessionId,
           query,
           mode,
           document_id: mode === 'documents' ? selectedDocumentId : null,
@@ -551,10 +578,10 @@ export default function App() {
           <div className="mb-4 flex gap-2">
             <button
               type="button"
-              onClick={resetSession}
-              className="rounded-lg border border-white/20 bg-white/5 px-3 py-1 text-xs text-slate-200 transition hover:bg-white/10"
+              onClick={startNewChat}
+              className="flex-1 rounded-lg border border-[var(--aln-secondary)]/40 bg-[var(--aln-secondary)]/10 px-3 py-1.5 text-xs font-medium text-[var(--aln-secondary)] transition hover:bg-[var(--aln-secondary)]/20"
             >
-              New session
+              + New Chat
             </button>
             <button
               type="button"
@@ -566,11 +593,11 @@ export default function App() {
           </div>
 
           <div className="rounded-xl border border-white/10 bg-slate-900/60 p-3">
-            <p className="mb-2 text-xs font-medium uppercase tracking-wide text-slate-300">Previous chats ({Array.isArray(historyMessages) ? historyMessages.length : 0})</p>
-            <div className="max-h-[55vh] space-y-2 overflow-y-auto pr-1">
+            <p className="mb-2 text-xs font-medium uppercase tracking-wide text-slate-300">Conversations ({Array.isArray(historyMessages) ? historyMessages.length : 0})</p>
+            <div className="max-h-[55vh] space-y-1.5 overflow-y-auto pr-1">
               {Array.isArray(historyMessages) && historyMessages.length > 0 ? (
                 historyMessages.map((conversation) => {
-                  const isExpanded = expandedSessions.has(conversation.summary.session_id)
+                  const isActive = activeSessionId === conversation.summary.session_id
                   const formattedDate = new Date(conversation.summary.created_at).toLocaleDateString('en-US', {
                     month: 'short',
                     day: 'numeric',
@@ -581,36 +608,33 @@ export default function App() {
                   return (
                     <div
                       key={conversation.summary.session_id}
-                      className="rounded-lg border border-white/10 bg-slate-950/70"
+                      className={`rounded-lg border transition ${
+                        isActive
+                          ? 'border-[var(--aln-secondary)]/50 bg-[var(--aln-secondary)]/10'
+                          : 'border-white/10 bg-slate-950/70'
+                      }`}
                     >
                       <button
                         type="button"
-                        onClick={() => toggleSessionExpanded(conversation.summary.session_id)}
-                        className="w-full px-3 py-2 text-left hover:bg-slate-900/50 transition"
+                        onClick={() => resumeSession(conversation)}
+                        className="w-full px-3 py-2.5 text-left transition hover:bg-slate-900/50"
                       >
                         <div className="flex items-start justify-between gap-2">
                           <div className="flex-1 min-w-0">
-                            <p className="text-[10px] uppercase tracking-wide text-slate-400 mb-1">
-                              {formattedDate} • {conversation.summary.message_count} messages
+                            <p className="text-[10px] uppercase tracking-wide text-slate-400 mb-0.5">
+                              {formattedDate} • {conversation.summary.message_count} msgs
                             </p>
-                            <p className="text-xs text-slate-200 truncate">{clip(conversation.summary.first_message, 100)}</p>
+                            <p className={`text-xs truncate ${ isActive ? 'text-[var(--aln-secondary)]' : 'text-slate-200' }`}>
+                              {clip(conversation.summary.first_message, 90)}
+                            </p>
                           </div>
-                          <span className="text-slate-400 flex-shrink-0 mt-0.5">
-                            {isExpanded ? '−' : '+'}
-                          </span>
+                          {isActive ? (
+                            <span className="flex-shrink-0 mt-0.5 text-[10px] font-medium text-[var(--aln-secondary)] border border-[var(--aln-secondary)]/40 rounded px-1.5 py-0.5">Active</span>
+                          ) : (
+                            <span className="flex-shrink-0 mt-0.5 text-[10px] text-slate-400 border border-white/20 rounded px-1.5 py-0.5 hover:border-[var(--aln-secondary)]/40 hover:text-[var(--aln-secondary)] transition">Resume</span>
+                          )}
                         </div>
                       </button>
-
-                      {isExpanded ? (
-                        <div className="border-t border-white/10 px-3 py-2 space-y-1 bg-slate-900/40 text-[11px]">
-                          {conversation.messages.map((message, idx) => (
-                            <div key={idx} className="py-1">
-                              <p className="text-slate-500 uppercase tracking-wide">{message.role}:</p>
-                              <p className="text-slate-300 mt-0.5">{clip(message.message, 140)}</p>
-                            </div>
-                          ))}
-                        </div>
-                      ) : null}
                     </div>
                   )
                 })
@@ -622,6 +646,18 @@ export default function App() {
         </aside>
 
         <section className="flex min-h-0 flex-col rounded-2xl border border-white/10 bg-slate-950/40 p-4 backdrop-blur">
+          {isViewingHistory ? (
+            <div className="mb-3 flex items-center justify-between rounded-xl border border-amber-300/30 bg-amber-500/10 px-4 py-2 text-xs text-amber-200">
+              <span>Viewing past session — new messages will continue this conversation</span>
+              <button
+                type="button"
+                onClick={startNewChat}
+                className="ml-3 rounded-lg border border-amber-300/40 px-2 py-1 text-amber-200 transition hover:bg-amber-500/20"
+              >
+                Start fresh
+              </button>
+            </div>
+          ) : null}
           <header className="mb-4 rounded-xl border border-white/10 bg-slate-950/50 p-4">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
@@ -726,7 +762,9 @@ export default function App() {
               ) : null}
             </div>
 
-            <span className="text-slate-400">Session: {sessionId}</span>
+            <span className="text-slate-400 text-[10px]">
+              Session: {activeSessionId.slice(0, 28)}...
+            </span>
           </div>
 
           <form onSubmit={handleSubmit} className="mt-4 flex gap-2">
