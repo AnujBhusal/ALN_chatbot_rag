@@ -134,7 +134,7 @@ Answer:"""
         """Provide rule-based answers for common questions when LLM is unavailable."""
         normalized = query.lower().strip().rstrip("?")
 
-        if any(greet in normalized for greet in ["hello", "hi", "hey"]):
+        if any(re.search(r'\b' + re.escape(greet) + r'\b', normalized) for greet in ["hello", "hi", "hey"]):
             return "Hello! Ask me a general question or an ALN document question."
 
         # Built-in knowledge base for common questions

@@ -13,12 +13,7 @@ class EmbeddingService:
         self.model_name = model_name or os.getenv("EMBEDDING_MODEL", "sentence-transformers/all-MiniLM-L6-v2")
         self.embedding_dim = 384
         self.local_model = None
-        try:
-            from sentence_transformers import SentenceTransformer  # type: ignore
-            self.local_model = SentenceTransformer(self.model_name)
-            logger.info(f"Loaded local SentenceTransformer: {self.model_name}")
-        except Exception as e:
-            logger.warning(f"Could not load local model: {e}")
+        self._model_loaded = False
 
         self.use_hf = os.getenv("USE_HF", "false").lower() == "true"
         self.hf_api_key = os.getenv("HF_API_KEY", "")
@@ -38,14 +33,31 @@ class EmbeddingService:
         if self.use_ollama:
             logger.info(f"Ollama embeddings enabled with model: {self.ollama_embedding_model}")
 
+    def _get_local_model(self):
+        """Lazy-load the SentenceTransformer model on first use."""
+        if not self._model_loaded:
+            try:
+                from sentence_transformers import SentenceTransformer  # type: ignore
+                self.local_model = SentenceTransformer(self.model_name)
+                self.embedding_dim = 384
+                logger.info(f"Loaded local SentenceTransformer: {self.model_name}")
+            except Exception as e:
+                logger.warning(f"Could not load local model: {e}")
+                self.local_model = None
+            finally:
+                self._model_loaded = True  # Don't retry on failure
+        return self.local_model
+
     def embed_texts(self, texts: List[str]) -> List[List[float]]:
         """Generate embeddings for a list of texts."""
         if not texts:
             return []
 
-        if self.local_model:
-            embeddings = self.local_model.encode(texts).tolist()
+        local_model = self._get_local_model()
+        if local_model:
+            embeddings = local_model.encode(texts).tolist()
             self.embedding_dim = len(embeddings[0]) if embeddings else self.embedding_dim
+            logger.info(f"Generated {len(embeddings)} embeddings via SentenceTransformer")
             return embeddings
 
         if self.use_ollama:
@@ -56,6 +68,7 @@ class EmbeddingService:
         if self.use_hf and self.hf_api_key:
             return self._embed_with_huggingface(texts)
 
+        logger.warning("All embedding providers failed, falling back to hash embeddings")
         return self._embed_with_hash(texts)
 
     def _embed_with_ollama(self, texts: List[str]) -> List[List[float]]:
@@ -94,7 +107,7 @@ class EmbeddingService:
                 json={"inputs": texts, "options": {"wait_for_model": True}},
                 timeout=30
             )
-            
+
             if response.status_code == 200:
                 embeddings = response.json()
                 if isinstance(embeddings, list) and embeddings and isinstance(embeddings[0], list):
@@ -106,7 +119,7 @@ class EmbeddingService:
             else:
                 logger.warning(f"HuggingFace API error: {response.status_code}, falling back to hash embeddings")
                 return self._embed_with_hash(texts)
-                
+
         except Exception as e:
             logger.error(f"Error with HuggingFace API: {e}, falling back to hash embeddings")
             return self._embed_with_hash(texts)
@@ -114,31 +127,27 @@ class EmbeddingService:
     def _embed_with_hash(self, texts: List[str]) -> List[List[float]]:
         """Generate simple hash-based embeddings for texts."""
         embeddings = []
-        
+
         for text in texts:
-            # Create a hash of the text
             text_hash = hashlib.sha256(text.encode()).hexdigest()
-            
-            # Convert hash to numbers and normalize
+
             embedding = []
             for i in range(0, len(text_hash), 2):
                 hex_pair = text_hash[i:i+2]
-                value = (int(hex_pair, 16) / 255.0) - 0.5  # Normalize to [-0.5, 0.5]
+                value = (int(hex_pair, 16) / 255.0) - 0.5
                 embedding.append(value)
-            
-            # Pad or truncate to desired dimension
+
             target_dim = self.embedding_dim
             while len(embedding) < target_dim:
                 embedding.extend(embedding[:min(len(embedding), target_dim - len(embedding))])
-            
+
             embedding = embedding[:target_dim]
-            
-            # Simple normalization
+
             norm = sum(x*x for x in embedding) ** 0.5
             if norm > 0:
                 embedding = [x/norm for x in embedding]
-            
+
             embeddings.append(embedding)
-        
+
         logger.info(f"Generated {len(embeddings)} hash-based embeddings")
         return embeddings
