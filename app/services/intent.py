@@ -73,7 +73,13 @@ def detect_intent(query: str) -> DetectedIntent:
     normalized_query = query.lower().strip()
     year_match = YEAR_PATTERN.search(query)
     year = int(year_match.group(1)) if year_match else None
-    is_small_talk = any(hint in normalized_query for hint in SMALL_TALK_HINTS)
+
+    # Use word-boundary matching to avoid "hi" matching "things", etc.
+    is_small_talk = any(
+        re.search(r'\b' + re.escape(hint) + r'\b', normalized_query)
+        for hint in SMALL_TALK_HINTS
+    )
+
     return DetectedIntent(
         document_type=detect_document_type(query),
         is_summary=is_summary_query(query),
