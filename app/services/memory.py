@@ -15,8 +15,15 @@ class MemoryService:
         
         if redis_url:
             try:
-                # Use Upstash Redis URL directly
-                self.redis_client = redis.from_url(redis_url, decode_responses=True, ssl_certfile=False)
+                # Upstash uses rediss:// (SSL). Pass ssl_cert_reqs to skip cert verification.
+                is_ssl = redis_url.startswith("rediss://")
+                extra_kwargs = {"ssl_cert_reqs": "none"} if is_ssl else {}
+                self.redis_client = redis.from_url(
+                    redis_url,
+                    decode_responses=True,
+                    socket_connect_timeout=5,
+                    **extra_kwargs,
+                )
                 logger.info("Connected to Redis via REDIS_URL")
             except Exception as e:
                 logger.error(f"Failed to connect to Redis via URL: {e}")
