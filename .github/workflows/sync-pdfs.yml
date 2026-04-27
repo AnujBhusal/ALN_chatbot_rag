@@ -1,0 +1,63 @@
+name: Sync PDFs to Render Backend
+
+# Trigger: Manual (workflow_dispatch) or daily schedule
+on:
+  workflow_dispatch:  # Manual trigger via GitHub UI
+    inputs:
+      force_reupload:
+        description: 'Force reupload all PDFs (ignore tracking)?'
+        required: false
+        default: 'false'
+  schedule:
+    # Run daily at 2 AM UTC (after daily resets)
+    - cron: '0 2 * * *'
+
+jobs:
+  sync-pdfs:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+          fetch-depth: 0
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+      
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests
+      
+      - name: Sync PDFs to Render
+        env:
+          RENDER_API_KEY: ${{ secrets.RENDER_API_KEY }}
+          RENDER_BACKEND_URL: https://aln-chatbot-rag.onrender.com/api
+          FORCE_REUPLOAD: ${{ github.event.inputs.force_reupload || 'false' }}
+        run: |
+          python scripts/sync_pdfs_to_render.py
+      
+      - name: Commit tracking file (if updated)
+        if: always()
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          
+          if git diff --quiet .uploaded_pdfs.json; then
+            echo "✅ No changes to .uploaded_pdfs.json - skipping commit"
+          else
+            echo "📝 Committing updated .uploaded_pdfs.json..."
+            git add .uploaded_pdfs.json
+            git commit -m "📝 Update PDF upload tracking [skip ci]"
+            git push
+          fi
+      
+      - name: Summary
+        if: always()
+        run: |
+          echo "✅ PDF sync workflow completed"
+          echo "Check logs above for upload results"
