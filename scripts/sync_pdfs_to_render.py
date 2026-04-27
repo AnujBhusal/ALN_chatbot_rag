@@ -70,6 +70,47 @@ def save_tracking_data(data: Dict):
         print(f"❌ Failed to save tracking file: {e}")
 
 
+def get_existing_documents_on_render() -> Dict[str, int]:
+    """
+    Query Render backend to get list of already-uploaded documents.
+    Returns: {document_title: document_id}
+    """
+    try:
+        response = requests.get(
+            f"{RENDER_API_URL}/ingest/documents",
+            timeout=10
+        )
+        
+        if response.status_code == 200:
+            result = response.json()
+            documents = result.get("documents", [])
+            doc_map = {}
+            
+            for doc in documents:
+                title = doc.get("title", "").strip().lower()
+                doc_id = doc.get("id")
+                if title and doc_id:
+                    doc_map[title] = doc_id
+            
+            if doc_map:
+                print(f"✅ Found {len(doc_map)} existing documents on Render backend:")
+                for title, doc_id in list(doc_map.items())[:5]:  # Show first 5
+                    print(f"   - {title} (ID: {doc_id})")
+                if len(doc_map) > 5:
+                    print(f"   ... and {len(doc_map) - 5} more")
+            else:
+                print("✅ No documents found on Render backend (will upload all)")
+            
+            return doc_map
+        else:
+            print(f"⚠️  Could not fetch documents from Render: {response.status_code}")
+            return {}
+    except Exception as e:
+        print(f"⚠️  Could not query Render backend: {str(e)[:100]}")
+        print("    Will proceed with local tracking only")
+        return {}
+
+
 def get_new_pdfs(tracking: Dict) -> List[Path]:
     """Find PDFs that haven't been uploaded yet."""
     if not DATA_PDFS_DIR.exists():
@@ -82,17 +123,28 @@ def get_new_pdfs(tracking: Dict) -> List[Path]:
         print(f"📁 No PDFs found in {DATA_PDFS_DIR}")
         return []
     
-    print(f"📚 Found {len(pdf_files)} total PDFs")
+    print(f"📚 Found {len(pdf_files)} total PDFs in local folder")
     
     if FORCE_REUPLOAD:
         print("🔄 Force reupload mode - uploading all PDFs")
         return sorted(pdf_files)
     
+    # Check what's already on Render backend
+    print("\n🔍 Checking which PDFs already exist on Render backend...")
+    render_docs = get_existing_documents_on_render()
+    
     new_pdfs = []
     for pdf_path in pdf_files:
         file_hash = get_file_hash(pdf_path)
+        pdf_title = pdf_path.stem.strip().lower()  # Remove .pdf and lowercase
         
-        # Check if already uploaded
+        # Check if already on Render
+        if pdf_title in render_docs:
+            doc_id = render_docs[pdf_title]
+            print(f"⏭️  Already on Render: {pdf_path.name} (ID: {doc_id})")
+            continue
+        
+        # Check local tracking
         if pdf_path.name in tracking["uploaded"]:
             stored_hash = tracking["uploaded"][pdf_path.name].get("hash")
             if stored_hash == file_hash:
@@ -101,6 +153,7 @@ def get_new_pdfs(tracking: Dict) -> List[Path]:
             else:
                 print(f"🔄 File changed: {pdf_path.name} (will re-upload)")
         
+        print(f"📤 Will upload: {pdf_path.name}")
         new_pdfs.append(pdf_path)
     
     return sorted(new_pdfs)

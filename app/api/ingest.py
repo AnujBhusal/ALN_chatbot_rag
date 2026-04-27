@@ -336,3 +336,80 @@ async def cleanup_duplicates(db: Session = Depends(get_db)) -> dict:
         "total_deleted": len(deleted_doc_ids),
         "total_chunks_deleted": deleted_chunk_count,
     }
+
+
+@router.get("/documents")
+async def list_documents(db: Session = Depends(get_db)) -> dict:
+    """
+    Get list of all uploaded documents.
+    Used by sync script to check which PDFs already exist.
+    """
+    try:
+        documents = db.query(models.Document).order_by(models.Document.id.desc()).all()
+        
+        doc_list = []
+        for doc in documents:
+            chunk_count = db.query(models.DocumentChunk).filter(
+                models.DocumentChunk.document_id == doc.id
+            ).count()
+            
+            doc_list.append({
+                "id": doc.id,
+                "title": doc.title,
+                "file_type": doc.file_type,
+                "chunks": chunk_count,
+                "uploaded_at": doc.uploaded_at.isoformat() if doc.uploaded_at else None,
+            })
+        
+        logger.info(f"📋 Listed {len(doc_list)} documents")
+        return {
+            "total": len(doc_list),
+            "documents": doc_list
+        }
+    
+    except Exception as e:
+        logger.error(f"   ❌ Error listing documents: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.delete("/documents/{document_id}")
+async def delete_document(document_id: int, db: Session = Depends(get_db)) -> dict:
+    """
+    Delete a specific document and its chunks.
+    Used by cleanup script to remove old duplicates.
+    """
+    try:
+        document = db.query(models.Document).filter(models.Document.id == document_id).first()
+        
+        if not document:
+            raise HTTPException(status_code=404, detail=f"Document {document_id} not found")
+        
+        logger.info(f"🗑️  Deleting document {document_id}: {document.title}")
+        
+        # Delete chunks first
+        chunks = db.query(models.DocumentChunk).filter(
+            models.DocumentChunk.document_id == document_id
+        ).all()
+        
+        chunk_count = len(chunks)
+        for chunk in chunks:
+            db.delete(chunk)
+        
+        # Delete document
+        db.delete(document)
+        db.commit()
+        
+        logger.info(f"✅ Deleted document {document_id} ({chunk_count} chunks removed)")
+        
+        return {
+            "message": f"Document {document_id} deleted",
+            "document_id": document_id,
+            "title": document.title,
+            "chunks_deleted": chunk_count
+        }
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"   ❌ Error deleting document: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
