@@ -23,3 +23,8 @@ OLLAMA_MODEL: str = os.getenv("OLLAMA_MODEL", "mistral")
 USE_GROQ: bool = os.getenv("USE_GROQ", "true").lower() == "true"
 USE_HF: bool = os.getenv("USE_HF", "false").lower() == "true"
 USE_OLLAMA: bool = os.getenv("USE_OLLAMA", "false").lower() == "true"
+
+# Local vs Production - auto-detect or override with env var
+RENDER_ENVIRONMENT = os.getenv("RENDER", "false").lower() == "true"  # True if running on Render
+LOCAL_MODE: bool = os.getenv("LOCAL_MODE", "false").lower() == "true" or not RENDER_ENVIRONMENT
+ENABLE_FOLDER_INGESTION: bool = os.getenv("ENABLE_FOLDER_INGESTION", "true").lower() == "true"

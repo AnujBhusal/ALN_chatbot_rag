@@ -6,6 +6,7 @@ import sys
 from app.db.session import init_db
 from app.api import ingest, chat, booking, auth
 from app import config
+from app.services.folder_ingestion import FolderIngestionService
 
 # Configure logging
 logging.basicConfig(
@@ -68,6 +69,40 @@ async def root():
 @app.get("/health")
 async def health_check():
     return {"status": "healthy", "message": "RAG Backend is running"}
+
+
+@app.on_event("startup")
+async def startup_event():
+    """Auto-ingest PDFs from ./data/pdfs folder if running locally."""
+    if config.LOCAL_MODE and config.ENABLE_FOLDER_INGESTION:
+        logger.info("\n" + "=" * 80)
+        logger.info("📚 LOCAL MODE DETECTED - Auto-ingesting PDFs from ./data/pdfs")
+        logger.info("=" * 80)
+        
+        try:
+            ingestion_service = FolderIngestionService()
+            results = ingestion_service.ingest_folder()
+            
+            logger.info("\n" + "=" * 80)
+            logger.info("📊 FOLDER INGESTION SUMMARY")
+            logger.info("=" * 80)
+            logger.info(f"Total PDFs: {results['total']}")
+            logger.info(f"✅ Successful: {results['successful']}")
+            logger.info(f"❌ Failed: {results['failed']}")
+            
+            for doc in results['documents']:
+                status_icon = "✅" if doc['status'] == 'ingested' else "⏭️"
+                logger.info(f"{status_icon} {doc['title']} (ID: {doc['id']}, {doc['chunks']} chunks)")
+            
+            logger.info("=" * 80 + "\n")
+        
+        except Exception as e:
+            logger.error(f"❌ Folder ingestion failed: {e}", exc_info=True)
+    else:
+        if not config.LOCAL_MODE:
+            logger.info("🌍 Production mode - folder ingestion disabled")
+        elif not config.ENABLE_FOLDER_INGESTION:
+            logger.info("⏭️  Folder ingestion disabled by ENABLE_FOLDER_INGESTION=false")
 
 if __name__ == "__main__":
     import uvicorn
