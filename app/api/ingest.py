@@ -95,18 +95,38 @@ async def upload_document(
     """
     Upload a document, chunk it, generate embeddings, and store in DB + Pinecone.
     """
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    logger.info(f"\n📄 Starting document upload: {file.filename}")
+    
     # Step 1: Extract text
-    text: str = normalize_extracted_text(extract_text_from_file(file))
+    logger.info(f"   Step 1: Extracting text...")
+    raw_text: str = extract_text_from_file(file)
+    logger.info(f"   - Raw text length: {len(raw_text)} chars")
+    
+    text: str = normalize_extracted_text(raw_text)
+    logger.info(f"   - Normalized text length: {len(text)} chars")
+    
     if not text.strip():
+        logger.error(f"   ❌ Uploaded file is empty!")
         raise HTTPException(status_code=400, detail="Uploaded file is empty.")
+    
+    logger.info(f"   ✅ Text extracted successfully")
 
     # Step 2: Chunking
+    logger.info(f"   Step 2: Chunking with strategy '{chunk_strategy}'...")
     if chunk_strategy == "sliding":
         chunks: List[str] = chunker.sliding_window_chunk(text)
     elif chunk_strategy == "sentence":
         chunks: List[str] = chunker.sentence_chunk(text)
     else:
+        logger.error(f"   ❌ Invalid chunk strategy")
         raise HTTPException(status_code=400, detail="Invalid chunk strategy. Use 'sliding' or 'sentence'.")
+    
+    logger.info(f"   - Created {len(chunks)} chunks")
+    logger.info(f"   - Sample chunk 1: {chunks[0][:100] if chunks else 'N/A'}...")
+    logger.info(f"   ✅ Chunking complete")
 
     metadata = build_document_metadata(
         filename=file.filename,
@@ -133,17 +153,25 @@ async def upload_document(
     db.refresh(document)
 
     # Step 4: Save chunks in Postgres
+    logger.info(f"   Step 4: Saving chunks to database...")
     chunk_records: List[models.DocumentChunk] = []
     for chunk in chunks:
         chunk_record = models.DocumentChunk(document_id=document.id, chunk_text=chunk)
         db.add(chunk_record)
         chunk_records.append(chunk_record)
     db.commit()
+    logger.info(f"   - Saved {len(chunk_records)} chunks")
+    logger.info(f"   ✅ Document saved (ID: {document.id})")
 
     # Step 5: Generate embeddings
+    logger.info(f"   Step 5: Generating embeddings for {len(chunks)} chunks...")
     embeddings: List[List[float]] = embedder.embed_texts(chunks)
+    logger.info(f"   - Generated {len(embeddings)} embeddings")
+    logger.info(f"   - Embedding dimension: {len(embeddings[0]) if embeddings else 0}")
+    logger.info(f"   ✅ Embeddings generated")
 
     # Step 6: Store embeddings in Pinecone with metadata
+    logger.info(f"   Step 6: Storing embeddings in Pinecone...")
     metadatas = [
         {
             "document_id": document.id,
@@ -156,6 +184,8 @@ async def upload_document(
         for chunk in chunk_records
     ]
     vectorstore.upsert_embeddings(embeddings, metadatas)
+    logger.info(f"   - Upserted {len(metadatas)} vectors to Pinecone")
+    logger.info(f"   ✅ Upload complete!")
 
     return {
         "message": "Document uploaded and processed successfully",

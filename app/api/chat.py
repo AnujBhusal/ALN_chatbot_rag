@@ -381,29 +381,47 @@ async def chat_query(
             target_document_ids = [latest_document.id]
             document_context = _build_document_context(latest_document)
 
+    logger.debug(f"🔍 Query: {request.query}")
+    logger.debug(f"   - Target document IDs: {target_document_ids}")
+    logger.debug(f"   - Requested type: {requested_document_type}")
+    logger.debug(f"   - Role: {request.role}")
+    
     query_embedding = embedder.embed_texts([request.query])[0]
+    logger.debug(f"   - Embedding dimension: {len(query_embedding)}")
+    
     query_filter = _build_query_filter(requested_document_type, request.role, intent.year, target_document_ids)
+    logger.debug(f"   - Query filter: {query_filter}")
 
     top_k = 20 if intent.is_summary else 12
+    logger.debug(f"   - Searching for top_k={top_k} results...")
     results = vectorstore.query(query_embedding, top_k=top_k, query_filter=query_filter)
+    logger.info(f"   ✅ Got {len(results)} results from vector store")
 
     # If year-specific filtering is too strict, retry without year while preserving role/doc-type constraints.
     if not results and intent.year is not None:
+        logger.warning(f"   ⚠️  No results with year filter, retrying without year...")
         fallback_without_year_filter = _build_query_filter(requested_document_type, request.role, None, target_document_ids)
         results = vectorstore.query(query_embedding, top_k=top_k, query_filter=fallback_without_year_filter)
+        logger.info(f"   ✅ Retry got {len(results)} results")
 
     if target_document_ids:
+        logger.debug(f"   - Filtering results to target documents {target_document_ids}...")
         # Force strict filtering just in case, and DO NOT fall back to other documents if empty.
-        results = [
+        filtered_results = [
             result
             for result in results
             if result.get("metadata", {}).get("document_id") in target_document_ids
         ]
+        logger.info(f"   ✅ Filtered to {len(filtered_results)} results from target documents")
+        results = filtered_results
 
     context = _build_context_blocks(results)
+    logger.debug(f"   - Context blocks built: {len(context)} chars")
 
     if not context and target_document_ids:
+        logger.warning(f"   ⚠️  No context from vector search, checking database chunks...")
         chunks = db.query(models.DocumentChunk).filter(models.DocumentChunk.document_id.in_(target_document_ids)).all()
+        logger.info(f"   - Found {len(chunks)} chunks in database")
         results = [
             {
                 "id": f"chunk_{chunk.id}",
