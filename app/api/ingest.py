@@ -65,13 +65,13 @@ def normalize_extracted_text(text: str) -> str:
         pass
 
     replacements = {
-        "â€™": "'",
-        "â€œ": '"',
-        "â€\x9d": '"',
-        "â€"": "-",
-        "â€"": "-",
-        "â€": '"',
-        "â": "",
+        "\u00e2\u0080\u0099": "'",  # â€™
+        "\u00e2\u0080\u009c": '"',  # â€œ
+        "\u00e2\u0080\u009d": '"',  # â€
+        "\u00e2\u0080\u0093": "-",  # â€" (en dash)
+        "\u00e2\u0080\u0094": "-",  # â€" (em dash)
+        "\u00e2\u0080": '"',        # â€
+        "\u00e2": "",               # â
     }
     for bad, good in replacements.items():
         text = text.replace(bad, good)
