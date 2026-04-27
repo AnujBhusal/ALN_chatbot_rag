@@ -3,6 +3,9 @@ from sqlalchemy.orm import Session
 from typing import List
 import os
 import re
+import threading
+import time
+import logging
 
 from app.services.chunking import ChunkingService
 from app.services.embeddings import EmbeddingService
@@ -12,6 +15,7 @@ from app.db.session import get_db
 from app.db import models
 from PyPDF2 import PdfReader
 
+logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/ingest", tags=["Ingestion"])
 
 # Services
@@ -64,8 +68,8 @@ def normalize_extracted_text(text: str) -> str:
         "â€™": "'",
         "â€œ": '"',
         "â€\x9d": '"',
-        "â€“": "-",
-        "â€”": "-",
+        "â€"": "-",
+        "â€"": "-",
         "â€": '"',
         "â": "",
     }
@@ -81,6 +85,44 @@ def normalize_extracted_text(text: str) -> str:
     return text.strip()
 
 
+def _background_embed_and_upsert(document_id: int, chunk_ids: List[int], chunk_texts: List[str], metadata: dict, filename: str, filetype: str):
+    """
+    Background thread function: Generate embeddings and upsert to Pinecone.
+    Prevents HTTP timeout for large documents.
+    """
+    try:
+        logger.info(f"📤 [BG] Starting embedding for document {document_id} ({len(chunk_texts)} chunks)...")
+        start_time = time.time()
+        
+        # Generate embeddings
+        embeddings = embedder.embed_texts(chunk_texts)
+        embed_time = time.time() - start_time
+        logger.info(f"📤 [BG] Generated {len(embeddings)} embeddings in {embed_time:.2f}s ({len(embeddings)/embed_time:.1f} chunks/sec)")
+        
+        # Prepare metadata for each chunk
+        metadatas = [
+            {
+                "document_id": document_id,
+                "chunk_id": chunk_ids[i],
+                "text": chunk_texts[i],
+                **metadata,
+                "filename": filename,
+                "filetype": filetype,
+            }
+            for i in range(len(chunk_texts))
+        ]
+        
+        # Upsert to Pinecone
+        logger.info(f"📤 [BG] Upserting {len(metadatas)} vectors to Pinecone...")
+        vectorstore.upsert_embeddings(embeddings, metadatas)
+        logger.info(f"✅ [BG] Document {document_id} embedding+upsert complete in {time.time() - start_time:.2f}s")
+        
+    except Exception as e:
+        logger.error(f"❌ [BG] Error embedding document {document_id}: {e}")
+        import traceback
+        traceback.print_exc()
+
+
 @router.post("/upload")
 async def upload_document(
     file: UploadFile = File(...),
@@ -93,11 +135,9 @@ async def upload_document(
     db: Session = Depends(get_db),
 ) -> dict:
     """
-    Upload a document, chunk it, generate embeddings, and store in DB + Pinecone.
+    Upload a document, chunk it, and save to DB immediately.
+    Embedding generation happens in background to avoid HTTP timeout.
     """
-    import logging
-    logger = logging.getLogger(__name__)
-    
     logger.info(f"\n📄 Starting document upload: {file.filename}")
     
     # Step 1: Extract text
@@ -160,36 +200,29 @@ async def upload_document(
         db.add(chunk_record)
         chunk_records.append(chunk_record)
     db.commit()
-    logger.info(f"   - Saved {len(chunk_records)} chunks")
+    logger.info(f"   - Saved {len(chunk_records)} chunks to DB")
     logger.info(f"   ✅ Document saved (ID: {document.id})")
 
-    # Step 5: Generate embeddings
-    logger.info(f"   Step 5: Generating embeddings for {len(chunks)} chunks...")
-    embeddings: List[List[float]] = embedder.embed_texts(chunks)
-    logger.info(f"   - Generated {len(embeddings)} embeddings")
-    logger.info(f"   - Embedding dimension: {len(embeddings[0]) if embeddings else 0}")
-    logger.info(f"   ✅ Embeddings generated")
-
-    # Step 6: Store embeddings in Pinecone with metadata
-    logger.info(f"   Step 6: Storing embeddings in Pinecone...")
-    metadatas = [
-        {
-            "document_id": document.id,
-            "chunk_id": chunk.id,
-            "text": chunk.chunk_text,
-            **metadata_to_dict(metadata),
-            "filename": file.filename,
-            "filetype": file.content_type,
-        }
-        for chunk in chunk_records
-    ]
-    vectorstore.upsert_embeddings(embeddings, metadatas)
-    logger.info(f"   - Upserted {len(metadatas)} vectors to Pinecone")
-    logger.info(f"   ✅ Upload complete!")
+    # Step 5: Schedule background embedding and Pinecone upsert
+    logger.info(f"   Step 5: Scheduling background embedding ({len(chunks)} chunks)...")
+    chunk_ids = [chunk.id for chunk in chunk_records]
+    chunk_texts = [chunk.chunk_text for chunk in chunk_records]
+    metadata_dict = metadata_to_dict(metadata)
+    
+    # Start background thread for embedding
+    bg_thread = threading.Thread(
+        target=_background_embed_and_upsert,
+        args=(document.id, chunk_ids, chunk_texts, metadata_dict, file.filename, file.content_type),
+        daemon=True
+    )
+    bg_thread.start()
+    logger.info(f"   ✅ Background embedding thread started")
 
     return {
-        "message": "Document uploaded and processed successfully",
+        "message": "Document uploaded and stored. Embedding generation in progress...",
         "document_id": document.id,
+        "chunk_count": len(chunk_records),
+        "embedding_status": "processing",
         "metadata": {
             "title": document.title,
             "document_type": document.document_type,
@@ -206,9 +239,6 @@ async def cleanup_duplicates(db: Session = Depends(get_db)) -> dict:
     Remove duplicate documents, keeping only the latest one.
     Admin endpoint for database maintenance.
     """
-    import logging
-    logger = logging.getLogger(__name__)
-    
     from collections import defaultdict
     
     # Get all documents ordered by upload time
@@ -220,43 +250,32 @@ async def cleanup_duplicates(db: Session = Depends(get_db)) -> dict:
     for doc in documents:
         by_title[doc.title].append(doc)
     
-    deleted_docs = []
-    deleted_chunks = 0
+    # Find and delete duplicates
+    deleted_doc_ids = []
+    deleted_chunk_count = 0
     
-    # Find and remove duplicates
     for title, docs in by_title.items():
         if len(docs) > 1:
-            logger.info(f"⚠️  Found {len(docs)} duplicates of '{title}'")
-            
-            # Keep the latest, delete others
-            latest = max(docs, key=lambda d: d.uploaded_at)
-            logger.info(f"   ✅ Keeping ID {latest.id}")
-            
-            for old_doc in docs:
-                if old_doc.id != latest.id:
-                    logger.info(f"   ❌ Deleting ID {old_doc.id}")
-                    
-                    # Delete chunks first
-                    chunk_count = db.query(models.DocumentChunk).filter(
-                        models.DocumentChunk.document_id == old_doc.id
-                    ).count()
-                    
-                    db.query(models.DocumentChunk).filter(
-                        models.DocumentChunk.document_id == old_doc.id
-                    ).delete()
-                    
-                    deleted_chunks += chunk_count
-                    logger.info(f"      └─ Deleted {chunk_count} chunks")
-                    
-                    # Delete document
-                    db.delete(old_doc)
-                    deleted_docs.append(old_doc.id)
+            logger.info(f"   ⚠️  Found {len(docs)} duplicates for '{title}'")
+            # Keep the latest, delete older ones
+            for old_doc in docs[:-1]:
+                logger.info(f"      Deleting ID {old_doc.id}")
+                deleted_doc_ids.append(old_doc.id)
+                # Delete chunks first
+                chunks = db.query(models.DocumentChunk).filter(
+                    models.DocumentChunk.document_id == old_doc.id
+                ).all()
+                deleted_chunk_count += len(chunks)
+                for chunk in chunks:
+                    db.delete(chunk)
+                db.delete(old_doc)
     
     db.commit()
+    logger.info(f"✅ Cleanup complete: Deleted {len(deleted_doc_ids)} documents, {deleted_chunk_count} chunks")
     
     return {
         "message": "Duplicate cleanup complete",
-        "deleted_documents": deleted_docs,
-        "total_deleted": len(deleted_docs),
-        "total_chunks_deleted": deleted_chunks,
+        "deleted_documents": deleted_doc_ids,
+        "total_deleted": len(deleted_doc_ids),
+        "total_chunks_deleted": deleted_chunk_count,
     }
