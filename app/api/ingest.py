@@ -8,6 +8,7 @@ import time
 import logging
 import tempfile
 import shutil
+import io
 
 from app.services.chunking import ChunkingService
 from app.services.embeddings import EmbeddingService
@@ -16,6 +17,12 @@ from app.services.metadata import build_document_metadata, metadata_to_dict
 from app.db.session import get_db
 from app.db import models
 from PyPDF2 import PdfReader
+
+try:
+    import pdfplumber
+    PDFPLUMBER_AVAILABLE = True
+except ImportError:
+    PDFPLUMBER_AVAILABLE = False
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/ingest", tags=["Ingestion"])
@@ -27,19 +34,129 @@ vectorstore = VectorStoreService()
 
 
 def extract_text_from_file(file: UploadFile) -> str:
-    """Extract text from .pdf or .txt file."""
+    """
+    Extract text from .pdf or .txt file with robust handling for multi-page PDFs.
+    
+    For PDFs:
+    - Uses PyPDF2 as primary method with full page logging
+    - Falls back to pdfplumber for complex/scanned PDFs
+    - Ensures file pointer is reset before reading
+    - Logs extraction progress for all pages
+    """
     if file.filename.endswith(".txt"):
         return file.file.read().decode("utf-8")
 
     elif file.filename.endswith(".pdf"):
-        pdf_reader = PdfReader(file.file)
-        text: str = ""
-        for page in pdf_reader.pages:
-            text += page.extract_text() or ""
-        return text
+        # Read entire PDF into bytes to avoid file pointer issues
+        file.file.seek(0)  # Reset to beginning
+        pdf_bytes = file.file.read()
+        
+        if not pdf_bytes:
+            raise HTTPException(status_code=400, detail="PDF file is empty")
+        
+        return _extract_text_from_pdf_bytes(pdf_bytes, file.filename)
 
     else:
         raise HTTPException(status_code=400, detail="Only .pdf and .txt files are supported.")
+
+
+def _extract_text_from_pdf_bytes(pdf_bytes: bytes, filename: str) -> str:
+    """
+    Extract text from PDF bytes with multiple fallback strategies.
+    
+    PRIMARY: PyPDF2 with detailed page logging
+    FALLBACK: pdfplumber (if available) for complex PDFs
+    FALLBACK: Simple text extraction without structure
+    """
+    text = ""
+    
+    # Strategy 1: PyPDF2 (primary method)
+    try:
+        logger.info(f"📄 Extracting PDF '{filename}' using PyPDF2...")
+        pdf_file = io.BytesIO(pdf_bytes)
+        pdf_reader = PdfReader(pdf_file)
+        
+        total_pages = len(pdf_reader.pages)
+        logger.info(f"   📋 Total pages detected: {total_pages}")
+        
+        if total_pages == 0:
+            logger.warning(f"   ⚠️  PDF has 0 pages, trying pdfplumber fallback...")
+            return _extract_text_with_pdfplumber(pdf_bytes, filename)
+        
+        extracted_pages = []
+        for page_idx, page in enumerate(pdf_reader.pages, start=1):
+            try:
+                page_text = page.extract_text() or ""
+                char_count = len(page_text.strip())
+                extracted_pages.append(char_count)
+                
+                if char_count > 0:
+                    logger.debug(f"   ✓ Page {page_idx}/{total_pages}: {char_count} chars extracted")
+                    text += page_text
+                else:
+                    logger.warning(f"   ⚠️  Page {page_idx}/{total_pages}: No text extracted (may be scanned/image-based)")
+                    
+            except Exception as page_error:
+                logger.error(f"   ❌ Page {page_idx}/{total_pages}: Error - {page_error}")
+                # Continue to next page instead of failing
+                continue
+        
+        if not text.strip():
+            logger.warning(f"   ⚠️  PyPDF2 extracted 0 characters total, trying pdfplumber...")
+            return _extract_text_with_pdfplumber(pdf_bytes, filename)
+        
+        logger.info(f"   ✅ PyPDF2 Success: Extracted {len(text):,} chars from {len(extracted_pages)} pages")
+        return text
+        
+    except Exception as e:
+        logger.error(f"   ❌ PyPDF2 failed: {e}")
+        logger.info(f"   📄 Falling back to pdfplumber...")
+        return _extract_text_with_pdfplumber(pdf_bytes, filename)
+
+
+def _extract_text_with_pdfplumber(pdf_bytes: bytes, filename: str) -> str:
+    """
+    Fallback PDF extraction using pdfplumber (more robust for complex PDFs).
+    Better at handling scanned PDFs, complex layouts, and non-standard encoding.
+    """
+    if not PDFPLUMBER_AVAILABLE:
+        logger.warning(f"   ⚠️  pdfplumber not installed (pip install pdfplumber)")
+        return ""
+    
+    try:
+        logger.info(f"📄 Extracting PDF '{filename}' using pdfplumber...")
+        pdf_file = io.BytesIO(pdf_bytes)
+        
+        text = ""
+        with pdfplumber.open(pdf_file) as pdf:
+            total_pages = len(pdf.pages)
+            logger.info(f"   📋 Total pages detected: {total_pages}")
+            
+            for page_idx, page in enumerate(pdf.pages, start=1):
+                try:
+                    page_text = page.extract_text() or ""
+                    char_count = len(page_text.strip())
+                    
+                    if char_count > 0:
+                        logger.debug(f"   ✓ Page {page_idx}/{total_pages}: {char_count} chars extracted")
+                        text += page_text
+                    else:
+                        logger.warning(f"   ⚠️  Page {page_idx}/{total_pages}: No text extracted")
+                        
+                except Exception as page_error:
+                    logger.error(f"   ❌ Page {page_idx}/{total_pages}: Error - {page_error}")
+                    continue
+        
+        if text.strip():
+            logger.info(f"   ✅ pdfplumber Success: Extracted {len(text):,} chars from {total_pages} pages")
+        else:
+            logger.error(f"   ❌ pdfplumber: No text extracted from any page (likely scanned image PDF)")
+        
+        return text
+        
+    except Exception as e:
+        logger.error(f"   ❌ pdfplumber failed: {e}")
+        return ""
 
 
 def _parse_optional_int(value: str | None) -> int | None:
