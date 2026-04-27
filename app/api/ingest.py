@@ -356,7 +356,7 @@ async def list_documents(db: Session = Depends(get_db)) -> dict:
             doc_list.append({
                 "id": doc.id,
                 "title": doc.title,
-                "file_type": doc.file_type,
+                "filetype": doc.filetype,
                 "chunks": chunk_count,
                 "uploaded_at": doc.uploaded_at.isoformat() if doc.uploaded_at else None,
             })
