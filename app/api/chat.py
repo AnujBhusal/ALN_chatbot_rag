@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import re
 from typing import Any, Dict, List, Optional
 from urllib.parse import quote
 from collections import OrderedDict
@@ -301,6 +302,52 @@ def _build_query_filter(requested_document_type: Optional[str], role: str, year:
     return {"$and": clauses}
 
 
+def _coerce_document_id(value: Any) -> Optional[int]:
+    """Normalize document_id from Pinecone metadata (can be int/float/string)."""
+    if value is None:
+        return None
+    try:
+        return int(float(value))
+    except (TypeError, ValueError):
+        return None
+
+
+def _tokenize_for_overlap(text: str) -> set[str]:
+    return {token for token in re.findall(r"[a-z0-9]{3,}", text.lower())}
+
+
+def _rank_database_chunks_for_query(query: str, chunks: List[models.DocumentChunk], limit: int = 8) -> List[models.DocumentChunk]:
+    """Rank DB chunks by lexical overlap so fallback context is not biased to page 1."""
+    query_tokens = _tokenize_for_overlap(query)
+    if not chunks:
+        return []
+
+    scored: List[tuple[float, models.DocumentChunk]] = []
+    query_lc = query.lower()
+    for chunk in chunks:
+        text = (chunk.chunk_text or "").strip()
+        if not text:
+            continue
+
+        chunk_tokens = _tokenize_for_overlap(text)
+        overlap = len(query_tokens & chunk_tokens)
+        density = overlap / max(len(query_tokens), 1)
+        phrase_boost = 0.5 if query_lc in text.lower() and len(query_lc) >= 6 else 0.0
+        score = overlap + density + phrase_boost
+        scored.append((score, chunk))
+
+    if not scored:
+        return chunks[:limit]
+
+    scored.sort(key=lambda item: item[0], reverse=True)
+    top_scored = [chunk for score, chunk in scored[:limit] if score > 0]
+    if top_scored:
+        return top_scored
+
+    # If query terms are absent across all chunks, keep deterministic fallback.
+    return chunks[:limit]
+
+
 def _persist_user_chat(
     db: Session,
     user: Optional[models.User],
@@ -397,6 +444,15 @@ async def chat_query(
     results = vectorstore.query(query_embedding, top_k=top_k, query_filter=query_filter)
     logger.info(f"   ✅ Got {len(results)} results from vector store")
 
+    # Defensive retry: if strict metadata filter yields zero, retry without filter
+    # and apply filtering in app logic. This guards against metadata type mismatches.
+    if not results and query_filter is not None:
+        logger.warning("   ⚠️  No results with Pinecone filter, retrying unfiltered and filtering in app...")
+        unfiltered_results = vectorstore.query(query_embedding, top_k=max(top_k * 3, 30), query_filter=None)
+        logger.info(f"   ✅ Unfiltered retry got {len(unfiltered_results)} results")
+        if unfiltered_results:
+            results = unfiltered_results
+
     # If year-specific filtering is too strict, retry without year while preserving role/doc-type constraints.
     if not results and intent.year is not None:
         logger.warning(f"   ⚠️  No results with year filter, retrying without year...")
@@ -407,10 +463,11 @@ async def chat_query(
     if target_document_ids:
         logger.debug(f"   - Filtering results to target documents {target_document_ids}...")
         # Force strict filtering just in case, and DO NOT fall back to other documents if empty.
+        allowed_document_ids = set(target_document_ids)
         filtered_results = [
             result
             for result in results
-            if result.get("metadata", {}).get("document_id") in target_document_ids
+            if _coerce_document_id(result.get("metadata", {}).get("document_id")) in allowed_document_ids
         ]
         logger.info(f"   ✅ Filtered to {len(filtered_results)} results from target documents")
         results = filtered_results
@@ -422,6 +479,8 @@ async def chat_query(
         logger.warning(f"   ⚠️  No context from vector search, checking database chunks...")
         chunks = db.query(models.DocumentChunk).filter(models.DocumentChunk.document_id.in_(target_document_ids)).all()
         logger.info(f"   - Found {len(chunks)} chunks in database")
+        ranked_chunks = _rank_database_chunks_for_query(request.query, chunks, limit=8)
+        logger.info(f"   - Ranked {len(ranked_chunks)} fallback chunks using query overlap")
         results = [
             {
                 "id": f"chunk_{chunk.id}",
@@ -435,7 +494,7 @@ async def chat_query(
                     "year": document_context["year"] if document_context else None,
                 },
             }
-            for chunk in chunks[:5]
+            for chunk in ranked_chunks
         ]
         context = _build_context_blocks(results)
 
