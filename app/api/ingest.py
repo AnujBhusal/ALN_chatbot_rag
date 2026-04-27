@@ -168,3 +168,65 @@ async def upload_document(
             "donor_name": document.donor_name,
         },
     }
+
+
+@router.delete("/cleanup-duplicates")
+async def cleanup_duplicates(db: Session = Depends(get_db)) -> dict:
+    """
+    Remove duplicate documents, keeping only the latest one.
+    Admin endpoint for database maintenance.
+    """
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    from collections import defaultdict
+    
+    # Get all documents ordered by upload time
+    documents = db.query(models.Document).order_by(models.Document.uploaded_at).all()
+    logger.info(f"🔍 Found {len(documents)} total documents")
+    
+    # Group by title
+    by_title = defaultdict(list)
+    for doc in documents:
+        by_title[doc.title].append(doc)
+    
+    deleted_docs = []
+    deleted_chunks = 0
+    
+    # Find and remove duplicates
+    for title, docs in by_title.items():
+        if len(docs) > 1:
+            logger.info(f"⚠️  Found {len(docs)} duplicates of '{title}'")
+            
+            # Keep the latest, delete others
+            latest = max(docs, key=lambda d: d.uploaded_at)
+            logger.info(f"   ✅ Keeping ID {latest.id}")
+            
+            for old_doc in docs:
+                if old_doc.id != latest.id:
+                    logger.info(f"   ❌ Deleting ID {old_doc.id}")
+                    
+                    # Delete chunks first
+                    chunk_count = db.query(models.DocumentChunk).filter(
+                        models.DocumentChunk.document_id == old_doc.id
+                    ).count()
+                    
+                    db.query(models.DocumentChunk).filter(
+                        models.DocumentChunk.document_id == old_doc.id
+                    ).delete()
+                    
+                    deleted_chunks += chunk_count
+                    logger.info(f"      └─ Deleted {chunk_count} chunks")
+                    
+                    # Delete document
+                    db.delete(old_doc)
+                    deleted_docs.append(old_doc.id)
+    
+    db.commit()
+    
+    return {
+        "message": "Duplicate cleanup complete",
+        "deleted_documents": deleted_docs,
+        "total_deleted": len(deleted_docs),
+        "total_chunks_deleted": deleted_chunks,
+    }
