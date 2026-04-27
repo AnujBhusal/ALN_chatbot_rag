@@ -94,7 +94,7 @@ class VectorStoreService:
     def upsert_embeddings(self, embeddings: List[List[float]], metadatas: List[Dict[str, Any]]) -> None:
         """Upsert embeddings with auto-generated IDs."""
         if not self._ensure_connected():
-            logger.warning("Pinecone not available, skipping embedding upsert")
+            logger.warning("❌ Pinecone not available, skipping embedding upsert")
             return
             
         try:
@@ -105,18 +105,24 @@ class VectorStoreService:
                 point_id = f"{doc_id}_{chunk_id}"
                 vectors.append({"id": point_id, "values": emb, "metadata": meta})
             
+            logger.info(f"   📤 Upserting {len(vectors)} vectors to Pinecone...")
+            logger.debug(f"      - First vector ID: {vectors[0]['id'] if vectors else 'N/A'}")
+            logger.debug(f"      - Embedding dimension: {len(vectors[0]['values']) if vectors else 0}")
+            logger.debug(f"      - Sample metadata: {vectors[0]['metadata'] if vectors else {}}")
+            
             self.index.upsert(vectors=vectors, namespace=self.namespace)
-            logger.info(f"Upserted {len(vectors)} embeddings to vector store")
+            logger.info(f"      ✅ Successfully upserted {len(vectors)} embeddings")
         except Exception as e:
-            logger.error(f"Error upserting embeddings: {e}")
+            logger.error(f"      ❌ Error upserting embeddings: {type(e).__name__}: {e}")
 
     def query(self, embedding: List[float], top_k: int = 5, query_filter: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
         """Query the vector store for similar documents."""
         if not self._ensure_connected():
-            logger.warning("Pinecone not available, returning empty results")
+            logger.warning("❌ Pinecone not available, returning empty results")
             return []
             
         try:
+            logger.debug(f"   🔍 Querying Pinecone with top_k={top_k}, filter={query_filter}")
             result = self.index.query(
                 vector=embedding,
                 top_k=top_k,
@@ -125,7 +131,9 @@ class VectorStoreService:
                 filter=query_filter,
             )
             matches = result.get("matches", []) if isinstance(result, dict) else getattr(result, "matches", [])
-            logger.info(f"Retrieved {len(matches)} results from vector store")
+            logger.info(f"   📊 Retrieved {len(matches)} results from Pinecone (filter: {bool(query_filter)})")
+            if matches:
+                logger.debug(f"      - Top result: {matches[0].get('metadata') if isinstance(matches[0], dict) else matches[0].metadata}")
             return [
                 {
                     "id": getattr(match, "id", None) if not isinstance(match, dict) else match.get("id"),
@@ -135,7 +143,7 @@ class VectorStoreService:
                 for match in matches
             ]
         except Exception as e:
-            logger.error(f"Error querying vector store: {e}")
+            logger.error(f"   ❌ Error querying vector store: {type(e).__name__}: {e}")
             return []
 
     def delete_by_document_id(self, document_id: int):
