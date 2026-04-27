@@ -6,6 +6,8 @@ import re
 import threading
 import time
 import logging
+import tempfile
+import shutil
 
 from app.services.chunking import ChunkingService
 from app.services.embeddings import EmbeddingService
@@ -85,54 +87,123 @@ def normalize_extracted_text(text: str) -> str:
     return text.strip()
 
 
-def _background_embed_and_upsert(document_id: int, chunk_ids: List[int], chunk_texts: List[str], metadata: dict, filename: str, filetype: str):
+def _background_process_document(
+    document_id: int, 
+    temp_file_path: str, 
+    chunk_strategy: str,
+    metadata_dict: dict,
+    filename: str,
+    filetype: str
+):
     """
-    Background thread function: Generate embeddings and upsert to Pinecone.
-    Prevents HTTP timeout for large documents.
-    Processes in small batches to avoid OOM on resource-constrained environments.
+    Background thread: Extract, chunk, embed, and upsert entire document.
+    This runs completely in background to avoid HTTP timeout.
     """
+    from app.db.session import SessionLocal
+    
+    db = SessionLocal()
     try:
-        logger.info(f"📤 [BG] Starting embedding for document {document_id} ({len(chunk_texts)} chunks)...")
+        logger.info(f"\n📄 [BG] Processing document {document_id}: {filename}")
         start_time = time.time()
         
-        # Batch embeddings in groups to manage memory
-        batch_size = 50
-        all_embeddings = []
+        # Step 1: Extract text
+        logger.info(f"   [BG] Step 1: Extracting text...")
+        class FakeFile:
+            def __init__(self, path):
+                self.file = open(path, 'rb')
+                self.filename = filename
+                self.content_type = filetype
+            def read(self):
+                return self.file.read()
+            def seek(self, pos):
+                self.file.seek(pos)
+            def __enter__(self):
+                return self
+            def __exit__(self, *args):
+                self.file.close()
         
-        for batch_idx in range(0, len(chunk_texts), batch_size):
-            batch_end = min(batch_idx + batch_size, len(chunk_texts))
-            batch_texts = chunk_texts[batch_idx:batch_end]
-            batch_chunk_ids = chunk_ids[batch_idx:batch_end]
+        fake_file = FakeFile(temp_file_path)
+        raw_text = extract_text_from_file(fake_file)
+        fake_file.__exit__(None, None, None)
+        
+        logger.info(f"   [BG]   - Raw text: {len(raw_text):,} chars")
+        
+        # Step 2: Normalize
+        text = normalize_extracted_text(raw_text)
+        logger.info(f"   [BG]   - Normalized: {len(text):,} chars")
+        
+        if not text.strip():
+            logger.error(f"   [BG] ❌ Document is empty!")
+            db.close()
+            return
+        
+        # Step 3: Chunk
+        logger.info(f"   [BG] Step 2: Chunking with strategy '{chunk_strategy}'...")
+        if chunk_strategy == "sliding":
+            chunks = chunker.sliding_window_chunk(text)
+        elif chunk_strategy == "sentence":
+            chunks = chunker.sentence_chunk(text)
+        else:
+            logger.error(f"   [BG] ❌ Invalid chunk strategy")
+            db.close()
+            return
+        
+        logger.info(f"   [BG]   - Created {len(chunks)} chunks")
+        
+        # Step 4: Save chunks to DB
+        logger.info(f"   [BG] Step 3: Saving {len(chunks)} chunks to database...")
+        chunk_records: List[models.DocumentChunk] = []
+        for chunk in chunks:
+            chunk_record = models.DocumentChunk(document_id=document_id, chunk_text=chunk)
+            db.add(chunk_record)
+            chunk_records.append(chunk_record)
+        db.commit()
+        logger.info(f"   [BG]   - Saved {len(chunk_records)} chunks")
+        
+        # Step 5: Generate embeddings and upsert (batched)
+        logger.info(f"   [BG] Step 4: Generating embeddings ({len(chunks)} chunks, batched)...")
+        batch_size = 50
+        
+        for batch_idx in range(0, len(chunks), batch_size):
+            batch_end = min(batch_idx + batch_size, len(chunks))
+            batch_texts = [chunks[i] for i in range(batch_idx, batch_end)]
+            batch_chunk_ids = [chunk_records[i].id for i in range(batch_idx, batch_end)]
             
-            logger.info(f"📤 [BG] Embedding batch {batch_idx//batch_size + 1} ({len(batch_texts)} chunks)...")
+            batch_num = batch_idx // batch_size + 1
+            logger.info(f"   [BG]   Batch {batch_num}: Embedding {len(batch_texts)} chunks...")
             
-            # Generate embeddings for this batch
             embeddings = embedder.embed_texts(batch_texts)
-            all_embeddings.extend(embeddings)
             
-            # Upsert this batch immediately to free memory
+            # Prepare metadata
             batch_metadatas = [
                 {
                     "document_id": document_id,
                     "chunk_id": batch_chunk_ids[i],
                     "text": batch_texts[i],
-                    **metadata,
+                    **metadata_dict,
                     "filename": filename,
                     "filetype": filetype,
                 }
                 for i in range(len(batch_texts))
             ]
             
+            logger.info(f"   [BG]   Batch {batch_num}: Upserting to Pinecone...")
             vectorstore.upsert_embeddings(embeddings, batch_metadatas)
-            logger.info(f"📤 [BG] Upserted batch {batch_idx//batch_size + 1} to Pinecone")
         
-        embed_time = time.time() - start_time
-        logger.info(f"✅ [BG] Document {document_id}: {len(all_embeddings)} embeddings in {embed_time:.2f}s ({len(all_embeddings)/embed_time:.1f} chunks/sec)")
+        elapsed = time.time() - start_time
+        logger.info(f"   [BG] ✅ Complete! {len(chunks)} chunks in {elapsed:.1f}s")
         
     except Exception as e:
-        logger.error(f"❌ [BG] Error embedding document {document_id}: {e}")
+        logger.error(f"   [BG] ❌ Error: {e}")
         import traceback
         traceback.print_exc()
+    finally:
+        db.close()
+        # Clean up temp file
+        try:
+            os.remove(temp_file_path)
+        except:
+            pass
 
 
 @router.post("/upload")
@@ -147,102 +218,76 @@ async def upload_document(
     db: Session = Depends(get_db),
 ) -> dict:
     """
-    Upload a document, chunk it, and save to DB immediately.
-    Embedding generation happens in background to avoid HTTP timeout.
+    Upload a document immediately.
+    All processing (extraction, chunking, embedding) happens in background.
+    Returns instantly without blocking.
     """
     logger.info(f"\n📄 Starting document upload: {file.filename}")
     
-    # Step 1: Extract text
-    logger.info(f"   Step 1: Extracting text...")
-    raw_text: str = extract_text_from_file(file)
-    logger.info(f"   - Raw text length: {len(raw_text)} chars")
+    # Only validate chunk_strategy upfront
+    if chunk_strategy not in ["sliding", "sentence"]:
+        raise HTTPException(status_code=400, detail="chunk_strategy must be 'sliding' or 'sentence'")
     
-    text: str = normalize_extracted_text(raw_text)
-    logger.info(f"   - Normalized text length: {len(text)} chars")
-    
-    if not text.strip():
-        logger.error(f"   ❌ Uploaded file is empty!")
-        raise HTTPException(status_code=400, detail="Uploaded file is empty.")
-    
-    logger.info(f"   ✅ Text extracted successfully")
+    try:
+        # Create metadata template
+        metadata = build_document_metadata(
+            filename=file.filename,
+            text="",  # Not available yet
+            document_type=document_type,
+            title=title,
+            year=_parse_optional_int(year),
+            program_name=program_name,
+            donor_name=donor_name,
+        )
 
-    # Step 2: Chunking
-    logger.info(f"   Step 2: Chunking with strategy '{chunk_strategy}'...")
-    if chunk_strategy == "sliding":
-        chunks: List[str] = chunker.sliding_window_chunk(text)
-    elif chunk_strategy == "sentence":
-        chunks: List[str] = chunker.sentence_chunk(text)
-    else:
-        logger.error(f"   ❌ Invalid chunk strategy")
-        raise HTTPException(status_code=400, detail="Invalid chunk strategy. Use 'sliding' or 'sentence'.")
-    
-    logger.info(f"   - Created {len(chunks)} chunks")
-    logger.info(f"   - Sample chunk 1: {chunks[0][:100] if chunks else 'N/A'}...")
-    logger.info(f"   ✅ Chunking complete")
+        # Create document record with "processing" status
+        document = models.Document(
+            filename=file.filename,
+            filetype=file.content_type,
+            title=metadata.title,
+            document_type=metadata.document_type,
+            year=metadata.year,
+            program_name=metadata.program_name,
+            donor_name=metadata.donor_name,
+        )
+        db.add(document)
+        db.commit()
+        db.refresh(document)
+        
+        logger.info(f"   ✅ Document registered (ID: {document.id})")
 
-    metadata = build_document_metadata(
-        filename=file.filename,
-        text=text,
-        document_type=document_type,
-        title=title,
-        year=_parse_optional_int(year),
-        program_name=program_name,
-        donor_name=donor_name,
-    )
+        # Save uploaded file to temp location
+        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
+        shutil.copyfileobj(file.file, temp_file)
+        temp_file.close()
+        logger.info(f"   📁 Temp file: {temp_file.name}")
 
-    # Step 3: Save document metadata in Postgres
-    document = models.Document(
-        filename=file.filename,
-        filetype=file.content_type,
-        title=metadata.title,
-        document_type=metadata.document_type,
-        year=metadata.year,
-        program_name=metadata.program_name,
-        donor_name=metadata.donor_name,
-    )
-    db.add(document)
-    db.commit()
-    db.refresh(document)
+        # Start background processing thread
+        metadata_dict = metadata_to_dict(metadata)
+        bg_thread = threading.Thread(
+            target=_background_process_document,
+            args=(document.id, temp_file.name, chunk_strategy, metadata_dict, file.filename, file.content_type),
+            daemon=True
+        )
+        bg_thread.start()
+        logger.info(f"   ✅ Background processing started")
 
-    # Step 4: Save chunks in Postgres
-    logger.info(f"   Step 4: Saving chunks to database...")
-    chunk_records: List[models.DocumentChunk] = []
-    for chunk in chunks:
-        chunk_record = models.DocumentChunk(document_id=document.id, chunk_text=chunk)
-        db.add(chunk_record)
-        chunk_records.append(chunk_record)
-    db.commit()
-    logger.info(f"   - Saved {len(chunk_records)} chunks to DB")
-    logger.info(f"   ✅ Document saved (ID: {document.id})")
-
-    # Step 5: Schedule background embedding and Pinecone upsert
-    logger.info(f"   Step 5: Scheduling background embedding ({len(chunks)} chunks)...")
-    chunk_ids = [chunk.id for chunk in chunk_records]
-    chunk_texts = [chunk.chunk_text for chunk in chunk_records]
-    metadata_dict = metadata_to_dict(metadata)
-    
-    # Start background thread for embedding
-    bg_thread = threading.Thread(
-        target=_background_embed_and_upsert,
-        args=(document.id, chunk_ids, chunk_texts, metadata_dict, file.filename, file.content_type),
-        daemon=True
-    )
-    bg_thread.start()
-    logger.info(f"   ✅ Background embedding thread started")
-
-    return {
-        "message": "Document uploaded and stored. Embedding generation in progress...",
-        "document_id": document.id,
-        "chunk_count": len(chunk_records),
-        "embedding_status": "processing",
-        "metadata": {
-            "title": document.title,
-            "document_type": document.document_type,
-            "year": document.year,
-            "program_name": document.program_name,
-            "donor_name": document.donor_name,
-        },
-    }
+        return {
+            "message": "Document uploaded and processing in background",
+            "document_id": document.id,
+            "status": "processing",
+            "metadata": {
+                "title": document.title,
+                "document_type": document.document_type,
+                "year": document.year,
+                "program_name": document.program_name,
+                "donor_name": document.donor_name,
+            },
+        }
+        
+    except Exception as e:
+        logger.error(f"   ❌ Error: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.delete("/cleanup-duplicates")
