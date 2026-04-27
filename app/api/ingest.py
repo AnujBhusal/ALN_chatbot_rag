@@ -89,33 +89,45 @@ def _background_embed_and_upsert(document_id: int, chunk_ids: List[int], chunk_t
     """
     Background thread function: Generate embeddings and upsert to Pinecone.
     Prevents HTTP timeout for large documents.
+    Processes in small batches to avoid OOM on resource-constrained environments.
     """
     try:
         logger.info(f"📤 [BG] Starting embedding for document {document_id} ({len(chunk_texts)} chunks)...")
         start_time = time.time()
         
-        # Generate embeddings
-        embeddings = embedder.embed_texts(chunk_texts)
+        # Batch embeddings in groups to manage memory
+        batch_size = 50
+        all_embeddings = []
+        
+        for batch_idx in range(0, len(chunk_texts), batch_size):
+            batch_end = min(batch_idx + batch_size, len(chunk_texts))
+            batch_texts = chunk_texts[batch_idx:batch_end]
+            batch_chunk_ids = chunk_ids[batch_idx:batch_end]
+            
+            logger.info(f"📤 [BG] Embedding batch {batch_idx//batch_size + 1} ({len(batch_texts)} chunks)...")
+            
+            # Generate embeddings for this batch
+            embeddings = embedder.embed_texts(batch_texts)
+            all_embeddings.extend(embeddings)
+            
+            # Upsert this batch immediately to free memory
+            batch_metadatas = [
+                {
+                    "document_id": document_id,
+                    "chunk_id": batch_chunk_ids[i],
+                    "text": batch_texts[i],
+                    **metadata,
+                    "filename": filename,
+                    "filetype": filetype,
+                }
+                for i in range(len(batch_texts))
+            ]
+            
+            vectorstore.upsert_embeddings(embeddings, batch_metadatas)
+            logger.info(f"📤 [BG] Upserted batch {batch_idx//batch_size + 1} to Pinecone")
+        
         embed_time = time.time() - start_time
-        logger.info(f"📤 [BG] Generated {len(embeddings)} embeddings in {embed_time:.2f}s ({len(embeddings)/embed_time:.1f} chunks/sec)")
-        
-        # Prepare metadata for each chunk
-        metadatas = [
-            {
-                "document_id": document_id,
-                "chunk_id": chunk_ids[i],
-                "text": chunk_texts[i],
-                **metadata,
-                "filename": filename,
-                "filetype": filetype,
-            }
-            for i in range(len(chunk_texts))
-        ]
-        
-        # Upsert to Pinecone
-        logger.info(f"📤 [BG] Upserting {len(metadatas)} vectors to Pinecone...")
-        vectorstore.upsert_embeddings(embeddings, metadatas)
-        logger.info(f"✅ [BG] Document {document_id} embedding+upsert complete in {time.time() - start_time:.2f}s")
+        logger.info(f"✅ [BG] Document {document_id}: {len(all_embeddings)} embeddings in {embed_time:.2f}s ({len(all_embeddings)/embed_time:.1f} chunks/sec)")
         
     except Exception as e:
         logger.error(f"❌ [BG] Error embedding document {document_id}: {e}")

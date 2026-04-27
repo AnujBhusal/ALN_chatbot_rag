@@ -49,16 +49,30 @@ class EmbeddingService:
         return self.local_model
 
     def embed_texts(self, texts: List[str]) -> List[List[float]]:
-        """Generate embeddings for a list of texts."""
+        """Generate embeddings for a list of texts with batching to prevent OOM."""
         if not texts:
             return []
 
+        # On resource-constrained environments (Render), use hash embeddings
+        # to avoid loading heavy models
+        if os.getenv("USE_HASH_EMBEDDINGS", "false").lower() == "true":
+            logger.info(f"Using hash embeddings (resource-constrained mode)")
+            return self._embed_with_hash(texts)
+
         local_model = self._get_local_model()
         if local_model:
-            embeddings = local_model.encode(texts).tolist()
-            self.embedding_dim = len(embeddings[0]) if embeddings else self.embedding_dim
-            logger.info(f"Generated {len(embeddings)} embeddings via SentenceTransformer")
-            return embeddings
+            # Batch embeddings to prevent OOM on large documents
+            batch_size = 50  # Process 50 texts at a time
+            all_embeddings = []
+            for i in range(0, len(texts), batch_size):
+                batch = texts[i:i+batch_size]
+                logger.info(f"Processing batch {i//batch_size + 1} ({len(batch)} texts)...")
+                batch_embeddings = local_model.encode(batch).tolist()
+                all_embeddings.extend(batch_embeddings)
+            
+            self.embedding_dim = len(all_embeddings[0]) if all_embeddings else self.embedding_dim
+            logger.info(f"Generated {len(all_embeddings)} embeddings via SentenceTransformer (batched)")
+            return all_embeddings
 
         if self.use_ollama:
             embeddings = self._embed_with_ollama(texts)
