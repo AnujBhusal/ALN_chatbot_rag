@@ -15,6 +15,12 @@ from app.db.session import get_db
 
 router = APIRouter(prefix="/auth", tags=["Auth"])
 
+ALLOWED_AUTH_EMAILS = {
+    "maharjanroshan67@gmail.com",
+    "anujbhusal4@gmail.com",
+    "karkishubha985@gmail.com",
+}
+
 
 class RegisterRequest(BaseModel):
     name: str = Field(min_length=2, max_length=80)
@@ -70,6 +76,13 @@ def _extract_bearer_token(authorization: Optional[str]) -> Optional[str]:
     return token or None
 
 
+def _require_allowed_email(email: str) -> str:
+    normalized_email = email.strip().lower()
+    if normalized_email not in ALLOWED_AUTH_EMAILS:
+        raise HTTPException(status_code=403, detail="This email is not allowed to access auth.")
+    return normalized_email
+
+
 def get_current_user_optional(
     authorization: Optional[str] = Header(default=None),
     db: Session = Depends(get_db),
@@ -95,13 +108,15 @@ def get_current_user(
 
 @router.post("/register", response_model=AuthResponse)
 async def register(payload: RegisterRequest, db: Session = Depends(get_db)) -> AuthResponse:
-    existing = db.query(models.User).filter(models.User.email == payload.email.lower()).first()
+    allowed_email = _require_allowed_email(payload.email)
+
+    existing = db.query(models.User).filter(models.User.email == allowed_email).first()
     if existing:
         raise HTTPException(status_code=400, detail="Email already registered")
 
     user = models.User(
         name=payload.name.strip(),
-        email=payload.email.lower(),
+        email=allowed_email,
         password_hash=_hash_password(payload.password),
     )
     db.add(user)
@@ -121,7 +136,9 @@ async def register(payload: RegisterRequest, db: Session = Depends(get_db)) -> A
 
 @router.post("/login", response_model=AuthResponse)
 async def login(payload: LoginRequest, db: Session = Depends(get_db)) -> AuthResponse:
-    user = db.query(models.User).filter(models.User.email == payload.email.lower()).first()
+    allowed_email = _require_allowed_email(payload.email)
+
+    user = db.query(models.User).filter(models.User.email == allowed_email).first()
     if not user or not _verify_password(payload.password, user.password_hash):
         raise HTTPException(status_code=401, detail="Invalid email or password")
 
