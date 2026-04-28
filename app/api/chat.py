@@ -512,13 +512,15 @@ async def chat_query(
     history = memory.get_history(request.session_id)
 
     answer_instruction = (
-        "Answer ONLY using the provided ALN documents. If not found, say 'Not available in ALN documents'."
+        "Answer primarily using the provided ALN documents. "
+        "You may reference earlier turns in chat history for context on follow-ups. "
+        "If the answer is not in the documents, say 'Not available in ALN documents'."
     )
 
     if requested_document_type and context:
         answer_instruction += (
             f" The user selected the {requested_document_type.replace('_', ' ')} PDF set, "
-            "so answer using only that document set and keep the response concise."
+            "so answer using that document set primarily and keep the response concise."
         )
 
     if intent.is_summary and context:
