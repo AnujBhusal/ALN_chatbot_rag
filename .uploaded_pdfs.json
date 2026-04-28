@@ -1,7 +1,48 @@
 {
-  "uploaded": {},
+  "uploaded": {
+    "AL Brand_Book.pdf": {
+      "hash": "b4eae041a8a16a4c5b29295c9d0df7df13d47335e4f9899c1f06392dd0397aa6",
+      "uploaded_at": "2026-04-28 14:13:09",
+      "size_bytes": 2103522
+    },
+    "Assessment Brief 2024-5 CMP6230 Data Management and MLops.pdf": {
+      "hash": "620dd7cb32e7e57795c8632593bfcb051f59dd8656c5caced6e5296f46aaf8e9",
+      "uploaded_at": "2026-04-28 14:13:15",
+      "size_bytes": 562412
+    },
+    "Donor_Proposal.pdf": {
+      "hash": "233103440522c25312b95a2c8dd3b275f2f71d1b0eb9a2000aa7b6b1cd82414a",
+      "uploaded_at": "2026-04-28 14:13:19",
+      "size_bytes": 2040
+    },
+    "General_Document.pdf": {
+      "hash": "48351b1f787c98c7064b4b01922cf7883979f2987b62a4420ecc8fdca35925a8",
+      "uploaded_at": "2026-04-28 14:13:27",
+      "size_bytes": 1959
+    },
+    "Governance_Weekly.pdf": {
+      "hash": "05a6b7be443ee1bd8d91a8aa2ff3fc9e9d2116b01cc7b97064a1c0eb067a5860",
+      "uploaded_at": "2026-04-28 14:13:31",
+      "size_bytes": 1989
+    },
+    "Integrity_Icon.pdf": {
+      "hash": "c1e7ec1e712f898d890f0a4eedb4419c5e7e1b17c99e334548c312cdf5e53eba",
+      "uploaded_at": "2026-04-28 14:13:35",
+      "size_bytes": 2006
+    },
+    "Internal_Policy.pdf": {
+      "hash": "9a13c879697e71e7e44a749f5513d869f2587383bddce94f11e3a9bd16a30102",
+      "uploaded_at": "2026-04-28 14:13:39",
+      "size_bytes": 2001
+    },
+    "Meeting_Notes.pdf": {
+      "hash": "0d95abda84a8b611a26598b07e76399df321d5471166d2ac0572173a76feafb6",
+      "uploaded_at": "2026-04-28 14:13:43",
+      "size_bytes": 1931
+    }
+  },
   "failed": {},
-  "last_sync": null,
-  "total_uploaded": 0,
+  "last_sync": "2026-04-28 14:13:43",
+  "total_uploaded": 8,
   "notes": "This file tracks which PDFs have been uploaded to Render. Auto-updated by GitHub Actions workflow."
 }
