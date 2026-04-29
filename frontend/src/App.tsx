@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useMemo, useState } from 'react'
+import { FormEvent, useEffect, useMemo, useRef, useState } from 'react'
 
 type Source = {
   title: string
@@ -185,6 +185,9 @@ export default function App() {
   const [currentSessionId, setCurrentSessionId] = useState<string>(() => getOrCreateSessionId())
   const [activeSessionId, setActiveSessionId] = useState<string>(() => getOrCreateSessionId())
 
+  // Ref for auto-scrolling to the latest message
+  const messagesEndRef = useRef<HTMLDivElement>(null)
+
   const baseUrl = useMemo(() => {
     const fromEnv = import.meta.env.VITE_API_BASE_URL as string | undefined
     return fromEnv && fromEnv.trim() ? fromEnv : 'http://localhost:8000/api'
@@ -254,6 +257,11 @@ export default function App() {
       active = false
     }
   }, [baseUrl, token])
+
+  // Auto-scroll to bottom whenever messages change or loading state toggles
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }, [messages, isLoading])
 
   useEffect(() => {
     if (!user || mode !== 'documents' || documents.length > 0) {
@@ -550,9 +558,10 @@ export default function App() {
   }
 
   return (
-    <div className="h-screen text-slate-100 overflow-hidden">
+    <div className="h-full text-slate-100 overflow-hidden">
       <div className="h-full mx-auto grid w-full max-w-7xl gap-4 px-4 py-6 sm:px-6 lg:grid-cols-[300px_1fr] lg:px-8">
-        <aside className="h-full flex flex-col rounded-2xl border border-white/10 bg-slate-950/60 p-4 backdrop-blur">\n          <div className="mb-4 flex items-center gap-3">
+        <aside className="h-full flex flex-col rounded-2xl border border-white/10 bg-slate-950/60 p-4 backdrop-blur">
+          <div className="mb-4 flex items-center gap-3">
             <img
               src="/logo.jpeg"
               alt="ALN logo"
@@ -720,8 +729,17 @@ export default function App() {
               </article>
             ))}
 
-            {isLoading ? <p className="text-sm text-slate-300">Thinking...</p> : null}
+            {isLoading ? (
+              <div className="flex items-center gap-2 text-sm text-slate-300">
+                <span className="inline-block h-2 w-2 animate-bounce rounded-full bg-[var(--aln-secondary)]"></span>
+                <span className="inline-block h-2 w-2 animate-bounce rounded-full bg-[var(--aln-secondary)] [animation-delay:0.15s]"></span>
+                <span className="inline-block h-2 w-2 animate-bounce rounded-full bg-[var(--aln-secondary)] [animation-delay:0.3s]"></span>
+                <span>Thinking...</span>
+              </div>
+            ) : null}
             {error ? <p className="text-sm text-rose-300">{error}</p> : null}
+            {/* Sentinel div — scrolled into view on new messages */}
+            <div ref={messagesEndRef} />
           </main>
 
           {/* Status Bar & Input - Fixed at Bottom */}
