@@ -558,9 +558,11 @@ export default function App() {
   }
 
   return (
-    <div className="h-full text-slate-100 overflow-hidden">
-      <div className="h-full mx-auto grid w-full max-w-7xl gap-4 px-4 py-6 sm:px-6 lg:grid-cols-[300px_1fr] lg:px-8">
-        <aside className="h-full flex flex-col rounded-2xl border border-white/10 bg-slate-950/60 p-4 backdrop-blur">
+    <div className="h-full overflow-hidden text-slate-100">
+      {/* Grid: never taller than the viewport */}
+      <div className="h-full overflow-hidden mx-auto grid w-full max-w-7xl gap-4 px-4 py-6 sm:px-6 lg:grid-cols-[300px_1fr] lg:px-8" style={{ gridTemplateRows: '1fr' }}>
+        {/* Sidebar: flex column, fills grid cell, only conversation list scrolls */}
+        <aside className="min-h-0 overflow-hidden flex flex-col rounded-2xl border border-white/10 bg-slate-950/60 p-4 backdrop-blur">
           <div className="mb-4 flex items-center gap-3">
             <img
               src="/logo.jpeg"
@@ -644,7 +646,8 @@ export default function App() {
           </div>
         </aside>
 
-        <section className="h-full flex flex-col rounded-2xl border border-white/10 bg-slate-950/40 backdrop-blur">
+        {/* Chat panel: flex column, fills grid cell, only <main> scrolls */}
+        <section className="min-h-0 overflow-hidden flex flex-col rounded-2xl border border-white/10 bg-slate-950/40 backdrop-blur">
           {/* Header - Fixed */}
           <header className="flex-shrink-0 border-b border-white/10 bg-slate-950/50 p-4 rounded-t-2xl">
             {isViewingHistory ? (
@@ -692,8 +695,8 @@ export default function App() {
             </div>
           </header>
 
-          {/* Messages Container - Scrollable */}
-          <main className="flex-1 min-h-0 overflow-y-auto space-y-3 p-4">
+          {/* Messages: THE ONLY scrollable area. flex-1 + min-h-0 is critical */}
+          <main className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden p-4" style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
             {messages.map((message) => (
               <article
                 key={message.id}
