@@ -126,6 +126,11 @@ function logoutPath(baseUrl: string): string {
   return `${cleaned}/auth/logout`
 }
 
+function deleteSessionPath(baseUrl: string, sessionId: string): string {
+  const cleaned = baseUrl.replace(/\/$/, '')
+  return `${cleaned}/chat/history/${encodeURIComponent(sessionId)}`
+}
+
 function formatDocumentType(type: string): string {
   return type
     .split('_')
@@ -187,6 +192,13 @@ export default function App() {
 
   // Ref for auto-scrolling to the latest message
   const messagesEndRef = useRef<HTMLDivElement>(null)
+
+  // Delete confirmation: holds the session_id pending deletion, or null
+  const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null)
+  const [deleteLoading, setDeleteLoading] = useState(false)
+
+  // Toast notification
+  const [toast, setToast] = useState<string | null>(null)
 
   const baseUrl = useMemo(() => {
     const fromEnv = import.meta.env.VITE_API_BASE_URL as string | undefined
@@ -263,6 +275,13 @@ export default function App() {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages, isLoading])
 
+  // Auto-dismiss toast after 3 seconds
+  useEffect(() => {
+    if (!toast) return
+    const timer = setTimeout(() => setToast(null), 3000)
+    return () => clearTimeout(timer)
+  }, [toast])
+
   useEffect(() => {
     if (!user || mode !== 'documents' || documents.length > 0) {
       return
@@ -323,6 +342,35 @@ export default function App() {
     setActiveSessionId(conversation.summary.session_id)
     setMessages(historyToMessages(conversation))
     setError(null)
+  }
+
+  async function handleDeleteSession(sessionId: string) {
+    setDeleteLoading(true)
+    try {
+      const response = await fetch(deleteSessionPath(baseUrl, sessionId), {
+        method: 'DELETE',
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      if (!response.ok) {
+        const text = await response.text()
+        throw new Error(text || 'Delete failed')
+      }
+
+      // Remove from sidebar immediately
+      setHistoryMessages((prev) => prev.filter((c) => c.summary.session_id !== sessionId))
+
+      // If the deleted session is the currently open one, start a new chat
+      if (activeSessionId === sessionId || currentSessionId === sessionId) {
+        startNewChat()
+      }
+
+      setToast('Chat deleted successfully')
+    } catch (err) {
+      setToast(err instanceof Error ? err.message : 'Could not delete chat')
+    } finally {
+      setDeleteLoading(false)
+      setDeleteConfirmId(null)
+    }
   }
 
   async function handleAuthSubmit(event: FormEvent<HTMLFormElement>) {
@@ -609,7 +657,7 @@ export default function App() {
                   return (
                     <div
                       key={conversation.summary.session_id}
-                      className={`rounded-lg border transition ${
+                      className={`rounded-lg border transition group relative ${
                         isActive
                           ? 'border-[var(--aln-secondary)]/50 bg-[var(--aln-secondary)]/10'
                           : 'border-white/10 bg-slate-950/70'
@@ -618,7 +666,7 @@ export default function App() {
                       <button
                         type="button"
                         onClick={() => resumeSession(conversation)}
-                        className="w-full px-3 py-2.5 text-left transition hover:bg-slate-900/50"
+                        className="w-full px-3 py-2.5 pr-8 text-left transition hover:bg-slate-900/50"
                       >
                         <div className="flex items-start justify-between gap-2">
                           <div className="flex-1 min-w-0">
@@ -636,6 +684,21 @@ export default function App() {
                           )}
                         </div>
                       </button>
+
+                      {/* Delete button — appears on hover */}
+                      <button
+                        type="button"
+                        title="Delete this chat"
+                        onClick={(e) => {
+                          e.stopPropagation()
+                          setDeleteConfirmId(conversation.summary.session_id)
+                        }}
+                        className="absolute top-1.5 right-1.5 opacity-0 group-hover:opacity-100 focus:opacity-100 rounded-md p-1 text-slate-400 hover:text-rose-400 hover:bg-rose-500/10 transition-all duration-150"
+                      >
+                        <svg xmlns="http://www.w3.org/2000/svg" className="h-3.5 w-3.5" viewBox="0 0 20 20" fill="currentColor">
+                          <path fillRule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v6a1 1 0 102 0V8a1 1 0 00-1-1z" clipRule="evenodd" />
+                        </svg>
+                      </button>
                     </div>
                   )
                 })
@@ -645,6 +708,43 @@ export default function App() {
             </div>
           </div>
         </aside>
+
+        {/* ── Confirmation Dialog ── */}
+        {deleteConfirmId ? (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: 'rgba(2,6,23,0.75)', backdropFilter: 'blur(4px)' }}>
+            <div className="w-full max-w-sm rounded-2xl border border-white/10 bg-slate-900 p-6 shadow-2xl">
+              <div className="mb-1 flex items-center gap-2">
+                <span className="flex h-8 w-8 items-center justify-center rounded-full bg-rose-500/15">
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 text-rose-400" viewBox="0 0 20 20" fill="currentColor">
+                    <path fillRule="evenodd" d="M9 2a1 1 0 00-.894.553L7.382 4H4a1 1 0 000 2v10a2 2 0 002 2h8a2 2 0 002-2V6a1 1 0 100-2h-3.382l-.724-1.447A1 1 0 0011 2H9zM7 8a1 1 0 012 0v6a1 1 0 11-2 0V8zm5-1a1 1 0 00-1 1v6a1 1 0 102 0V8a1 1 0 00-1-1z" clipRule="evenodd" />
+                  </svg>
+                </span>
+                <h2 className="text-sm font-semibold text-slate-100">Delete Chat</h2>
+              </div>
+              <p className="mb-5 mt-2 text-sm text-slate-300">
+                Are you sure you want to delete this chat? This action cannot be undone.
+              </p>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => setDeleteConfirmId(null)}
+                  disabled={deleteLoading}
+                  className="flex-1 rounded-xl border border-white/20 bg-slate-800 px-4 py-2 text-sm text-slate-200 transition hover:bg-slate-700 disabled:opacity-50"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => handleDeleteSession(deleteConfirmId)}
+                  disabled={deleteLoading}
+                  className="flex-1 rounded-xl bg-rose-600 px-4 py-2 text-sm font-medium text-white transition hover:bg-rose-500 disabled:cursor-not-allowed disabled:opacity-60"
+                >
+                  {deleteLoading ? 'Deleting...' : 'Delete'}
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
 
         {/* Chat panel: flex column, fills grid cell, only <main> scrolls */}
         <section className="min-h-0 overflow-hidden flex flex-col rounded-2xl border border-white/10 bg-slate-950/40 backdrop-blur">
@@ -802,6 +902,20 @@ export default function App() {
           </footer>
         </section>
       </div>
+
+      {/* ── Toast Notification ── */}
+      {toast ? (
+        <div
+          className={`fixed bottom-6 left-1/2 z-50 -translate-x-1/2 rounded-xl px-5 py-3 text-sm font-medium shadow-2xl border transition-all duration-300 ${
+            toast.toLowerCase().includes('deleted') || toast.toLowerCase().includes('success')
+              ? 'bg-emerald-900/90 border-emerald-500/40 text-emerald-100'
+              : 'bg-rose-900/90 border-rose-500/40 text-rose-100'
+          }`}
+        >
+          {toast.toLowerCase().includes('deleted') || toast.toLowerCase().includes('success') ? '✓ ' : '✕ '}
+          {toast}
+        </div>
+      ) : null}
     </div>
   )
 }

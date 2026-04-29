@@ -641,6 +641,33 @@ async def get_chat_history(
     return GroupedHistoryResponse(conversations=conversations)
 
 
+@router.delete("/history/{session_id}")
+async def delete_chat_session(
+    session_id: str,
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict:
+    """
+    Delete all chat messages for a given session_id belonging to the current user.
+    Returns 404 if the session does not exist or belongs to another user.
+    """
+    deleted_count = (
+        db.query(models.UserChatMessage)
+        .filter(
+            models.UserChatMessage.session_id == session_id,
+            models.UserChatMessage.user_id == current_user.id,
+        )
+        .delete(synchronize_session=False)
+    )
+
+    if deleted_count == 0:
+        raise HTTPException(status_code=404, detail="Session not found or already deleted")
+
+    db.commit()
+    logger.info(f"Deleted session {session_id} ({deleted_count} messages) for user {current_user.id}")
+    return {"message": "Chat session deleted", "session_id": session_id, "deleted_messages": deleted_count}
+
+
 @router.get("/documents")
 async def list_documents(
     role: str = Query(default="staff", pattern="^(admin|staff)$"),
