@@ -683,7 +683,7 @@ export default function App() {
             </div>
           </header>
 
-          <main className="flex-1 space-y-3 overflow-y-auto rounded-xl border border-white/10 bg-slate-950/40 p-4">
+          <main className="flex-1 min-h-0 space-y-3 overflow-y-auto rounded-xl border border-white/10 bg-slate-950/40 p-4">
             {messages.map((message) => (
               <article
                 key={message.id}
@@ -723,7 +723,7 @@ export default function App() {
             {error ? <p className="text-sm text-rose-300">{error}</p> : null}
           </main>
 
-          <div className="mt-3 flex flex-wrap items-center justify-between gap-3 text-xs">
+          <div className="mt-3 flex-shrink-0 flex flex-wrap items-center justify-between gap-3 text-xs">
             <div className="flex items-center gap-2 text-slate-300">
               <span className="inline-flex items-center rounded-full border border-white/20 px-3 py-1">
                 Active: {mode === 'general' ? 'General mode' : 'Document mode'}
@@ -758,7 +758,7 @@ export default function App() {
             </span>
           </div>
 
-          <form onSubmit={handleSubmit} className="mt-4 flex gap-2">
+          <form onSubmit={handleSubmit} className="mt-4 flex-shrink-0 flex gap-2">
             <input
               type="text"
               value={input}
