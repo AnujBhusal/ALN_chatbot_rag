@@ -641,27 +641,28 @@ export default function App() {
           </div>
         </aside>
 
-        <section className="flex h-full flex-col rounded-2xl border border-white/10 bg-slate-950/40 p-4 backdrop-blur">
-          {isViewingHistory ? (
-            <div className="mb-3 flex items-center justify-between rounded-xl border border-amber-300/30 bg-amber-500/10 px-4 py-2 text-xs text-amber-200">
-              <span>Viewing past session — new messages will continue this conversation</span>
-              <button
-                type="button"
-                onClick={startNewChat}
-                className="ml-3 rounded-lg border border-amber-300/40 px-2 py-1 text-amber-200 transition hover:bg-amber-500/20"
-              >
-                Start fresh
-              </button>
-            </div>
-          ) : null}
-          <header className="mb-4 rounded-xl border border-white/10 bg-slate-950/50 p-4">
+        <section className="h-full flex flex-col rounded-2xl border border-white/10 bg-slate-950/40 backdrop-blur">
+          {/* Header - Fixed */}
+          <header className="flex-shrink-0 border-b border-white/10 bg-slate-950/50 p-4 rounded-t-2xl">
+            {isViewingHistory ? (
+              <div className="mb-3 flex items-center justify-between rounded-lg border border-amber-300/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
+                <span>Viewing past session — new messages will continue this conversation</span>
+                <button
+                  type="button"
+                  onClick={startNewChat}
+                  className="ml-3 rounded-lg border border-amber-300/40 px-2 py-1 text-amber-200 transition hover:bg-amber-500/20"
+                >
+                  Start fresh
+                </button>
+              </div>
+            ) : null}
             <div className="flex flex-wrap items-center justify-between gap-3">
               <div>
                 <h1 className="text-lg font-semibold">ALN Assistant</h1>
                 <p className="text-xs text-slate-300">Signed in as {user.name}</p>
               </div>
 
-              <div className="flex items-center gap-2 rounded-xl border border-white/15 bg-slate-900/70 p-1">
+              <div className="flex items-center gap-2 rounded-lg border border-white/15 bg-slate-900/70 p-1">
                 <button
                   type="button"
                   onClick={() => setMode('general')}
@@ -688,7 +689,8 @@ export default function App() {
             </div>
           </header>
 
-          <main className="flex-1 min-h-0 space-y-3 overflow-y-auto rounded-xl border border-white/10 bg-slate-950/40 p-4">
+          {/* Messages Container - Scrollable */}
+          <main className="flex-1 min-h-0 overflow-y-auto space-y-3 p-4">
             {messages.map((message) => (
               <article
                 key={message.id}
@@ -729,58 +731,61 @@ export default function App() {
             <div ref={messagesEndRef} />
           </main>
 
-          <div className="mt-3 flex-shrink-0 flex flex-wrap items-center justify-between gap-3 text-xs">
-            <div className="flex items-center gap-2 text-slate-300">
-              <span className="inline-flex items-center rounded-full border border-white/20 px-3 py-1">
-                Active: {mode === 'general' ? 'General mode' : 'Document mode'}
+          {/* Status Bar & Input - Fixed at Bottom */}
+          <footer className="flex-shrink-0 border-t border-white/10 bg-slate-950/40 p-4 rounded-b-2xl space-y-3">
+            <div className="flex flex-wrap items-center justify-between gap-2 text-xs">
+              <div className="flex items-center gap-2 text-slate-300">
+                <span className="inline-flex items-center rounded-full border border-white/20 px-3 py-1">
+                  Active: {mode === 'general' ? 'General mode' : 'Document mode'}
+                </span>
+                {mode === 'documents' ? (
+                  documentsLoading ? (
+                    <span className="rounded-lg border border-white/20 bg-slate-900/80 px-2 py-1 text-slate-200">
+                      Loading PDFs...
+                    </span>
+                  ) : documents.length > 0 ? (
+                    <select
+                      value={selectedDocumentId ?? ''}
+                      onChange={(event) => setSelectedDocumentId(Number(event.target.value))}
+                      className="max-w-[22rem] rounded-lg border border-white/20 bg-slate-900/80 px-2 py-1 text-slate-100"
+                    >
+                      {documents.map((doc) => (
+                        <option key={doc.id} value={doc.id}>
+                          {doc.title} ({doc.filename})
+                        </option>
+                      ))}
+                    </select>
+                  ) : (
+                    <span className="rounded-lg border border-amber-300/40 bg-amber-500/10 px-2 py-1 text-amber-200">
+                      No PDFs ingested yet
+                    </span>
+                  )
+                ) : null}
+              </div>
+
+              <span className="text-slate-400 text-[10px]">
+                Session: {activeSessionId.slice(0, 28)}...
               </span>
-              {mode === 'documents' ? (
-                documentsLoading ? (
-                  <span className="rounded-lg border border-white/20 bg-slate-900/80 px-2 py-1 text-slate-200">
-                    Loading PDFs...
-                  </span>
-                ) : documents.length > 0 ? (
-                  <select
-                    value={selectedDocumentId ?? ''}
-                    onChange={(event) => setSelectedDocumentId(Number(event.target.value))}
-                    className="max-w-[22rem] rounded-lg border border-white/20 bg-slate-900/80 px-2 py-1 text-slate-100"
-                  >
-                    {documents.map((doc) => (
-                      <option key={doc.id} value={doc.id}>
-                        {doc.title} ({doc.filename})
-                      </option>
-                    ))}
-                  </select>
-                ) : (
-                  <span className="rounded-lg border border-amber-300/40 bg-amber-500/10 px-2 py-1 text-amber-200">
-                    No PDFs ingested yet
-                  </span>
-                )
-              ) : null}
             </div>
 
-            <span className="text-slate-400 text-[10px]">
-              Session: {activeSessionId.slice(0, 28)}...
-            </span>
-          </div>
-
-          <form onSubmit={handleSubmit} className="mt-4 flex-shrink-0 flex gap-2">
-            <input
-              type="text"
-              value={input}
-              onChange={(event) => setInput(event.target.value)}
-              className="flex-1 rounded-xl border border-white/20 bg-slate-900/80 px-4 py-3 text-sm text-slate-100 outline-none ring-[var(--aln-secondary)] transition focus:ring-2"
-              placeholder={mode === 'general' ? 'Ask anything...' : 'Ask from selected PDF...'}
-              disabled={isLoading}
-            />
-            <button
-              type="submit"
-              disabled={isLoading || !input.trim() || (mode === 'documents' && !selectedDocumentId)}
-              className="rounded-xl bg-[var(--aln-primary)] px-5 py-3 text-sm font-medium text-white transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-60"
-            >
-              Send
-            </button>
-          </form>
+            <form onSubmit={handleSubmit} className="flex gap-2">
+              <input
+                type="text"
+                value={input}
+                onChange={(event) => setInput(event.target.value)}
+                className="flex-1 rounded-xl border border-white/20 bg-slate-900/80 px-4 py-3 text-sm text-slate-100 outline-none ring-[var(--aln-secondary)] transition focus:ring-2"
+                placeholder={mode === 'general' ? 'Ask anything...' : 'Ask from selected PDF...'}
+                disabled={isLoading}
+              />
+              <button
+                type="submit"
+                disabled={isLoading || !input.trim() || (mode === 'documents' && !selectedDocumentId)}
+                className="rounded-xl bg-[var(--aln-primary)] px-5 py-3 text-sm font-medium text-white transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                Send
+              </button>
+            </form>
+          </footer>
         </section>
       </div>
     </div>
