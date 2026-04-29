@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useMemo, useRef, useState } from 'react'
+import React, { FormEvent, useEffect, useMemo, useRef, useState } from 'react'
 
 type Source = {
   document_id?: number | null
@@ -177,6 +177,45 @@ function clip(value: string, max = 120): string {
   return `${value.slice(0, max)}...`
 }
 
+/**
+ * Locate the retrieval snippet inside fullText.
+ * Returns [textBefore, matchedText, textAfter] or null if not found.
+ * Strategy: exact match first, then case-insensitive search on first 60 chars.
+ */
+function splitForHighlight(
+  fullText: string,
+  snippet: string,
+): [string, string, string] | null {
+  if (!snippet || !fullText) return null
+
+  const clean = cleanSnippet(snippet)
+
+  // 1. Exact match
+  const exactIdx = fullText.indexOf(clean)
+  if (exactIdx !== -1) {
+    return [
+      fullText.slice(0, exactIdx),
+      fullText.slice(exactIdx, exactIdx + clean.length),
+      fullText.slice(exactIdx + clean.length),
+    ]
+  }
+
+  // 2. Case-insensitive match on first 60 chars of snippet
+  const searchKey = clean.slice(0, 60).toLowerCase()
+  const lowerFull = fullText.toLowerCase()
+  const keyIdx = lowerFull.indexOf(searchKey)
+  if (keyIdx !== -1) {
+    const endIdx = Math.min(keyIdx + clean.length, fullText.length)
+    return [
+      fullText.slice(0, keyIdx),
+      fullText.slice(keyIdx, endIdx),
+      fullText.slice(endIdx),
+    ]
+  }
+
+  return null
+}
+
 export default function App() {
   const [messages, setMessages] = useState<Message[]>([
     {
@@ -220,6 +259,8 @@ export default function App() {
   const [refFullText, setRefFullText] = useState<string | null>(null)
   const [refFullTextLoading, setRefFullTextLoading] = useState(false)
   const [refFullTextError, setRefFullTextError] = useState<string | null>(null)
+  // Ref on the <mark> element so we can auto-scroll to it
+  const refHighlightRef = useRef<HTMLElement>(null)
 
   const baseUrl = useMemo(() => {
     const fromEnv = import.meta.env.VITE_API_BASE_URL as string | undefined
@@ -302,6 +343,17 @@ export default function App() {
     const timer = setTimeout(() => setToast(null), 3000)
     return () => clearTimeout(timer)
   }, [toast])
+
+  // Auto-scroll to the highlighted snippet when full text finishes loading
+  useEffect(() => {
+    if (refFullText && refHighlightRef.current) {
+      // Small delay so the DOM has painted before we scroll
+      const t = setTimeout(() => {
+        refHighlightRef.current?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      }, 80)
+      return () => clearTimeout(t)
+    }
+  }, [refFullText])
 
   useEffect(() => {
     if (!user || mode !== 'documents' || documents.length > 0) {
@@ -1058,8 +1110,31 @@ export default function App() {
                     {selectedRef.snippet ? cleanSnippet(selectedRef.snippet) : 'No content available.'}
                   </p>
                 </div>
-              ) : refFullText ? (
-                <p className="text-sm leading-relaxed text-slate-200 whitespace-pre-wrap">{refFullText}</p>
+              ) : refFullText ? (() => {
+                  const parts = splitForHighlight(refFullText, selectedRef.snippet)
+                  if (!parts) {
+                    // Snippet not found in full text — show full text without highlight
+                    return (
+                      <p className="text-sm leading-relaxed text-slate-200 whitespace-pre-wrap">
+                        {refFullText}
+                      </p>
+                    )
+                  }
+                  const [before, match, after] = parts
+                  return (
+                    <p className="text-sm leading-relaxed text-slate-200 whitespace-pre-wrap">
+                      <span className="text-slate-400">{before}</span>
+                      <mark
+                        ref={refHighlightRef as React.RefObject<HTMLElement>}
+                        className="inline rounded-sm bg-[var(--aln-secondary)]/25 text-slate-100 px-0.5"
+                        style={{ boxShadow: '0 0 0 2px rgba(82,140,148,0.5)', scrollMarginTop: '24px' }}
+                      >
+                        {match}
+                      </mark>
+                      <span className="text-slate-400">{after}</span>
+                    </p>
+                  )
+                })()
               ) : selectedRef.document_id == null ? (
                 <div className="space-y-2">
                   <p className="text-[11px] text-amber-300/80 uppercase tracking-wide">⚠ Full document not available for this source</p>
