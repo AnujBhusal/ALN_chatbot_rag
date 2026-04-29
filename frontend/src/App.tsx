@@ -64,6 +64,14 @@ type DocumentItem = {
   document_type: string
 }
 
+type SelectedRef = {
+  label: string      // e.g. "Ref 1"
+  title: string
+  type: string
+  year?: number | null
+  snippet: string
+}
+
 const SESSION_STORAGE_KEY = 'aln-session-id'
 const AUTH_TOKEN_STORAGE_KEY = 'aln-auth-token'
 
@@ -199,6 +207,9 @@ export default function App() {
 
   // Toast notification
   const [toast, setToast] = useState<string | null>(null)
+
+  // Reference modal
+  const [selectedRef, setSelectedRef] = useState<SelectedRef | null>(null)
 
   const baseUrl = useMemo(() => {
     const fromEnv = import.meta.env.VITE_API_BASE_URL as string | undefined
@@ -806,7 +817,43 @@ export default function App() {
                     : 'mr-auto bg-slate-800/80'
                 }`}
               >
-                <p className="whitespace-pre-wrap text-sm leading-relaxed">{message.content}</p>
+                {/* Render content — [Ref N] tokens become clickable buttons */}
+                {(() => {
+                  const parts = message.content.split(/(\[Ref \d+\])/g)
+                  return (
+                    <p className="whitespace-pre-wrap text-sm leading-relaxed">
+                      {parts.map((part, i) => {
+                        const match = part.match(/^\[Ref (\d+)\]$/)
+                        if (match && message.sources) {
+                          const refIndex = parseInt(match[1], 10) - 1
+                          const source = message.sources[refIndex]
+                          if (source) {
+                            return (
+                              <button
+                                key={i}
+                                type="button"
+                                onClick={() =>
+                                  setSelectedRef({
+                                    label: `Ref ${refIndex + 1}`,
+                                    title: source.title,
+                                    type: source.type,
+                                    year: source.year,
+                                    snippet: source.snippet,
+                                  })
+                                }
+                                className="inline-flex items-center rounded px-1.5 py-0.5 text-xs font-semibold text-[var(--aln-secondary)] bg-[var(--aln-secondary)]/10 border border-[var(--aln-secondary)]/30 hover:bg-[var(--aln-secondary)]/20 hover:border-[var(--aln-secondary)]/60 transition-all duration-150 cursor-pointer mx-0.5"
+                                title={`View ${source.title}`}
+                              >
+                                {part}
+                              </button>
+                            )
+                          }
+                        }
+                        return <span key={i}>{part}</span>
+                      })}
+                    </p>
+                  )
+                })()}
                 {message.sources && message.sources.length > 0 ? (
                   <div className="mt-3 border-t border-white/10 pt-2 text-xs text-slate-200">
                     <p className="mb-2 font-medium">References</p>
@@ -914,6 +961,72 @@ export default function App() {
         >
           {toast.toLowerCase().includes('deleted') || toast.toLowerCase().includes('success') ? '✓ ' : '✕ '}
           {toast}
+        </div>
+      ) : null}
+
+      {/* ── Reference Detail Modal ── */}
+      {selectedRef ? (
+        <div
+          className="fixed inset-0 z-50 flex items-center justify-center p-4"
+          style={{ background: 'rgba(2,6,23,0.80)', backdropFilter: 'blur(6px)' }}
+          onClick={() => setSelectedRef(null)}
+        >
+          <div
+            className="relative w-full max-w-lg rounded-2xl border border-white/10 bg-slate-900 p-6 shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            {/* Close button */}
+            <button
+              type="button"
+              onClick={() => setSelectedRef(null)}
+              className="absolute right-4 top-4 rounded-lg p-1.5 text-slate-400 hover:bg-slate-700 hover:text-slate-100 transition"
+              aria-label="Close"
+            >
+              <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" viewBox="0 0 20 20" fill="currentColor">
+                <path fillRule="evenodd" d="M4.293 4.293a1 1 0 011.414 0L10 8.586l4.293-4.293a1 1 0 111.414 1.414L11.414 10l4.293 4.293a1 1 0 01-1.414 1.414L10 11.414l-4.293 4.293a1 1 0 01-1.414-1.414L8.586 10 4.293 5.707a1 1 0 010-1.414z" clipRule="evenodd" />
+              </svg>
+            </button>
+
+            {/* Header */}
+            <div className="mb-4 flex items-start gap-3 pr-8">
+              <span className="flex-shrink-0 flex h-8 w-8 items-center justify-center rounded-full bg-[var(--aln-secondary)]/15 border border-[var(--aln-secondary)]/30">
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4 text-[var(--aln-secondary)]" viewBox="0 0 20 20" fill="currentColor">
+                  <path d="M9 4.804A7.968 7.968 0 005.5 4c-1.255 0-2.443.29-3.5.804v10A7.969 7.969 0 015.5 14c1.669 0 3.218.51 4.5 1.385A7.962 7.962 0 0114.5 14c1.255 0 2.443.29 3.5.804v-10A7.968 7.968 0 0014.5 4c-1.255 0-2.443.29-3.5.804V12a1 1 0 11-2 0V4.804z" />
+                </svg>
+              </span>
+              <div className="min-w-0">
+                <p className="text-[10px] font-semibold uppercase tracking-widest text-[var(--aln-secondary)] mb-0.5">
+                  {selectedRef.label}
+                </p>
+                <h2 className="text-sm font-semibold text-slate-100 leading-snug">{selectedRef.title}</h2>
+                <p className="mt-0.5 text-[11px] uppercase tracking-wide text-slate-400">
+                  {formatDocumentType(selectedRef.type)}
+                  {selectedRef.year ? ` • ${selectedRef.year}` : ''}
+                </p>
+              </div>
+            </div>
+
+            {/* Divider */}
+            <div className="mb-4 h-px bg-white/10" />
+
+            {/* Full snippet */}
+            <div className="max-h-72 overflow-y-auto rounded-xl border border-white/10 bg-slate-950/60 p-4">
+              <p className="text-sm leading-relaxed text-slate-200 whitespace-pre-wrap">
+                {selectedRef.snippet ? cleanSnippet(selectedRef.snippet) : 'No content available.'}
+              </p>
+            </div>
+
+            {/* Footer close */}
+            <div className="mt-4 flex justify-end">
+              <button
+                type="button"
+                onClick={() => setSelectedRef(null)}
+                className="rounded-xl border border-white/20 bg-slate-800 px-4 py-2 text-sm text-slate-200 transition hover:bg-slate-700"
+              >
+                Close
+              </button>
+            </div>
+          </div>
         </div>
       ) : null}
     </div>
