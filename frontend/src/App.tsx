@@ -239,8 +239,12 @@ function renderHighlightedText(
       <span className="text-slate-400">{before}</span>
       <mark
         ref={highlightRef}
-        className="inline rounded-sm bg-[var(--aln-secondary)]/25 text-slate-100 px-0.5"
-        style={{ boxShadow: '0 0 0 2px rgba(82,140,148,0.5)', scrollMarginTop: '24px' }}
+        className="inline rounded-sm px-0.5 font-medium text-slate-900"
+        style={{
+          background: 'linear-gradient(120deg, #fbbf24 0%, #f59e0b 100%)',
+          boxShadow: '0 0 0 2px #f59e0b, 0 2px 8px rgba(251,191,36,0.35)',
+          scrollMarginTop: '24px',
+        }}
       >
         {match}
       </mark>
