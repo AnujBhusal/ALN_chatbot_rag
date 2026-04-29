@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useMemo, useState, useRef } from 'react'
+import { FormEvent, useEffect, useMemo, useState } from 'react'
 
 type Source = {
   title: string
@@ -190,8 +190,6 @@ export default function App() {
     return fromEnv && fromEnv.trim() ? fromEnv : 'http://localhost:8000/api'
   }, [])
 
-  const messagesEndRef = useRef<HTMLDivElement>(null)
-
   const isViewingHistory = activeSessionId !== currentSessionId
 
   async function loadHistory(authToken: string) {
@@ -209,10 +207,6 @@ export default function App() {
     setHistoryMessages([])
     setHistoryMessages(payload.conversations)
   }
-
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages])
 
   useEffect(() => {
     let active = true
@@ -728,7 +722,6 @@ export default function App() {
 
             {isLoading ? <p className="text-sm text-slate-300">Thinking...</p> : null}
             {error ? <p className="text-sm text-rose-300">{error}</p> : null}
-            <div ref={messagesEndRef} />
           </main>
 
           {/* Status Bar & Input - Fixed at Bottom */}
