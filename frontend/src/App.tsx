@@ -1,4 +1,4 @@
-import { FormEvent, useEffect, useMemo, useState } from 'react'
+import { FormEvent, useEffect, useMemo, useState, useRef } from 'react'
 
 type Source = {
   title: string
@@ -190,6 +190,8 @@ export default function App() {
     return fromEnv && fromEnv.trim() ? fromEnv : 'http://localhost:8000/api'
   }, [])
 
+  const messagesEndRef = useRef<HTMLDivElement>(null)
+
   const isViewingHistory = activeSessionId !== currentSessionId
 
   async function loadHistory(authToken: string) {
@@ -207,6 +209,10 @@ export default function App() {
     setHistoryMessages([])
     setHistoryMessages(payload.conversations)
   }
+
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }, [messages])
 
   useEffect(() => {
     let active = true
@@ -550,10 +556,9 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen text-slate-100">
-      <div className="mx-auto grid min-h-screen w-full max-w-7xl gap-4 px-4 py-6 sm:px-6 lg:grid-cols-[300px_1fr] lg:px-8 auto-rows-fr">
-        <aside className="h-full rounded-2xl border border-white/10 bg-slate-950/60 p-4 backdrop-blur">
-          <div className="mb-4 flex items-center gap-3">
+    <div className="h-screen text-slate-100 overflow-hidden">
+      <div className="h-full mx-auto grid w-full max-w-7xl gap-4 px-4 py-6 sm:px-6 lg:grid-cols-[300px_1fr] lg:px-8">
+        <aside className="h-full flex flex-col rounded-2xl border border-white/10 bg-slate-950/60 p-4 backdrop-blur">\n          <div className="mb-4 flex items-center gap-3">
             <img
               src="/logo.jpeg"
               alt="ALN logo"
@@ -583,9 +588,9 @@ export default function App() {
             </button>
           </div>
 
-          <div className="rounded-xl border border-white/10 bg-slate-900/60 p-3">
+          <div className="flex-1 rounded-xl border border-white/10 bg-slate-900/60 p-3 overflow-hidden flex flex-col">
             <p className="mb-2 text-xs font-medium uppercase tracking-wide text-slate-300">Conversations ({Array.isArray(historyMessages) ? historyMessages.length : 0})</p>
-            <div className="max-h-[55vh] space-y-1.5 overflow-y-auto pr-1">
+            <div className="flex-1 min-h-0 space-y-1.5 overflow-y-auto pr-1">
               {Array.isArray(historyMessages) && historyMessages.length > 0 ? (
                 historyMessages.map((conversation) => {
                   const isActive = activeSessionId === conversation.summary.session_id
@@ -721,6 +726,7 @@ export default function App() {
 
             {isLoading ? <p className="text-sm text-slate-300">Thinking...</p> : null}
             {error ? <p className="text-sm text-rose-300">{error}</p> : null}
+            <div ref={messagesEndRef} />
           </main>
 
           <div className="mt-3 flex-shrink-0 flex flex-wrap items-center justify-between gap-3 text-xs">
