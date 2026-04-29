@@ -216,6 +216,39 @@ function splitForHighlight(
   return null
 }
 
+/**
+ * Renders full document text with the retrieved snippet highlighted.
+ * Defined outside App to avoid IIFE-in-JSX TypeScript errors.
+ */
+function renderHighlightedText(
+  fullText: string,
+  snippet: string,
+  highlightRef: React.RefObject<HTMLElement>,
+): React.ReactElement {
+  const parts = splitForHighlight(fullText, snippet)
+  if (!parts) {
+    return (
+      <p className="text-sm leading-relaxed text-slate-200 whitespace-pre-wrap">
+        {fullText}
+      </p>
+    )
+  }
+  const [before, match, after] = parts
+  return (
+    <p className="text-sm leading-relaxed text-slate-200 whitespace-pre-wrap">
+      <span className="text-slate-400">{before}</span>
+      <mark
+        ref={highlightRef}
+        className="inline rounded-sm bg-[var(--aln-secondary)]/25 text-slate-100 px-0.5"
+        style={{ boxShadow: '0 0 0 2px rgba(82,140,148,0.5)', scrollMarginTop: '24px' }}
+      >
+        {match}
+      </mark>
+      <span className="text-slate-400">{after}</span>
+    </p>
+  )
+}
+
 export default function App() {
   const [messages, setMessages] = useState<Message[]>([
     {
@@ -1110,31 +1143,8 @@ export default function App() {
                     {selectedRef.snippet ? cleanSnippet(selectedRef.snippet) : 'No content available.'}
                   </p>
                 </div>
-              ) : refFullText ? (() => {
-                  const parts = splitForHighlight(refFullText, selectedRef.snippet)
-                  if (!parts) {
-                    // Snippet not found in full text — show full text without highlight
-                    return (
-                      <p className="text-sm leading-relaxed text-slate-200 whitespace-pre-wrap">
-                        {refFullText}
-                      </p>
-                    )
-                  }
-                  const [before, match, after] = parts
-                  return (
-                    <p className="text-sm leading-relaxed text-slate-200 whitespace-pre-wrap">
-                      <span className="text-slate-400">{before}</span>
-                      <mark
-                        ref={refHighlightRef as React.RefObject<HTMLElement>}
-                        className="inline rounded-sm bg-[var(--aln-secondary)]/25 text-slate-100 px-0.5"
-                        style={{ boxShadow: '0 0 0 2px rgba(82,140,148,0.5)', scrollMarginTop: '24px' }}
-                      >
-                        {match}
-                      </mark>
-                      <span className="text-slate-400">{after}</span>
-                    </p>
-                  )
-                })()
+              ) : refFullText ? (
+                renderHighlightedText(refFullText, selectedRef.snippet, refHighlightRef as React.RefObject<HTMLElement>)
               ) : selectedRef.document_id == null ? (
                 <div className="space-y-2">
                   <p className="text-[11px] text-amber-300/80 uppercase tracking-wide">⚠ Full document not available for this source</p>
