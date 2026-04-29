@@ -747,3 +747,42 @@ async def document_preview(
         "year": document.year,
         "preview_text": "\n\n".join([chunk.chunk_text for chunk in chunks]),
     }
+
+
+@router.get("/documents/{document_id}/full-text")
+async def document_full_text(
+    document_id: int,
+    current_user: models.User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """
+    Return the complete reconstructed text of a document from all stored chunks,
+    ordered by chunk id (insertion / page order).
+    Used by the frontend reference modal to show the full document content.
+    """
+    document = db.query(models.Document).filter(models.Document.id == document_id).first()
+    if not document:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    chunks = (
+        db.query(models.DocumentChunk)
+        .filter(models.DocumentChunk.document_id == document_id)
+        .order_by(models.DocumentChunk.id.asc())
+        .all()
+    )
+
+    if not chunks:
+        raise HTTPException(status_code=404, detail="No content found for this document")
+
+    full_text = "\n\n".join(chunk.chunk_text.strip() for chunk in chunks if chunk.chunk_text)
+
+    return {
+        "document_id": document.id,
+        "title": document.title,
+        "filename": document.filename,
+        "document_type": document.document_type,
+        "year": document.year,
+        "chunk_count": len(chunks),
+        "word_count": len(full_text.split()),
+        "full_text": full_text,
+    }

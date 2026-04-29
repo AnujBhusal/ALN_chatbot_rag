@@ -1,6 +1,7 @@
 import { FormEvent, useEffect, useMemo, useRef, useState } from 'react'
 
 type Source = {
+  document_id?: number | null
   title: string
   type: string
   year?: number | null
@@ -65,11 +66,12 @@ type DocumentItem = {
 }
 
 type SelectedRef = {
-  label: string      // e.g. "Ref 1"
+  label: string           // e.g. "Ref 1"
+  document_id?: number | null
   title: string
   type: string
   year?: number | null
-  snippet: string
+  snippet: string         // short retrieval snippet (fallback)
 }
 
 const SESSION_STORAGE_KEY = 'aln-session-id'
@@ -137,6 +139,11 @@ function logoutPath(baseUrl: string): string {
 function deleteSessionPath(baseUrl: string, sessionId: string): string {
   const cleaned = baseUrl.replace(/\/$/, '')
   return `${cleaned}/chat/history/${encodeURIComponent(sessionId)}`
+}
+
+function fullTextPath(baseUrl: string, documentId: number): string {
+  const cleaned = baseUrl.replace(/\/$/, '')
+  return `${cleaned}/chat/documents/${documentId}/full-text`
 }
 
 function formatDocumentType(type: string): string {
@@ -210,6 +217,9 @@ export default function App() {
 
   // Reference modal
   const [selectedRef, setSelectedRef] = useState<SelectedRef | null>(null)
+  const [refFullText, setRefFullText] = useState<string | null>(null)
+  const [refFullTextLoading, setRefFullTextLoading] = useState(false)
+  const [refFullTextError, setRefFullTextError] = useState<string | null>(null)
 
   const baseUrl = useMemo(() => {
     const fromEnv = import.meta.env.VITE_API_BASE_URL as string | undefined
@@ -832,17 +842,39 @@ export default function App() {
                               <button
                                 key={i}
                                 type="button"
-                                onClick={() =>
-                                  setSelectedRef({
+                                onClick={() => {
+                                  const ref: SelectedRef = {
                                     label: `Ref ${refIndex + 1}`,
+                                    document_id: source.document_id,
                                     title: source.title,
                                     type: source.type,
                                     year: source.year,
                                     snippet: source.snippet,
-                                  })
-                                }
+                                  }
+                                  setSelectedRef(ref)
+                                  setRefFullText(null)
+                                  setRefFullTextError(null)
+                                  // If we have a document_id, fetch the full text immediately
+                                  if (source.document_id) {
+                                    setRefFullTextLoading(true)
+                                    fetch(fullTextPath(baseUrl, source.document_id), {
+                                      headers: { Authorization: `Bearer ${token}` },
+                                    })
+                                      .then((r) => {
+                                        if (!r.ok) throw new Error(`Failed to load document (${r.status})`)
+                                        return r.json() as Promise<{ full_text: string; word_count: number; chunk_count: number }>
+                                      })
+                                      .then((data) => {
+                                        setRefFullText(data.full_text)
+                                      })
+                                      .catch((err) => {
+                                        setRefFullTextError(err instanceof Error ? err.message : 'Could not load document')
+                                      })
+                                      .finally(() => setRefFullTextLoading(false))
+                                  }
+                                }}
                                 className="inline-flex items-center rounded px-1.5 py-0.5 text-xs font-semibold text-[var(--aln-secondary)] bg-[var(--aln-secondary)]/10 border border-[var(--aln-secondary)]/30 hover:bg-[var(--aln-secondary)]/20 hover:border-[var(--aln-secondary)]/60 transition-all duration-150 cursor-pointer mx-0.5"
-                                title={`View ${source.title}`}
+                                title={`View full content: ${source.title}`}
                               >
                                 {part}
                               </button>
@@ -1009,11 +1041,34 @@ export default function App() {
             {/* Divider */}
             <div className="mb-4 h-px bg-white/10" />
 
-            {/* Full snippet */}
-            <div className="max-h-72 overflow-y-auto rounded-xl border border-white/10 bg-slate-950/60 p-4">
-              <p className="text-sm leading-relaxed text-slate-200 whitespace-pre-wrap">
-                {selectedRef.snippet ? cleanSnippet(selectedRef.snippet) : 'No content available.'}
-              </p>
+            {/* Full document text */}
+            <div className="max-h-[60vh] overflow-y-auto rounded-xl border border-white/10 bg-slate-950/60 p-4">
+              {refFullTextLoading ? (
+                <div className="flex items-center gap-2 text-sm text-slate-400">
+                  <span className="inline-block h-2 w-2 animate-bounce rounded-full bg-[var(--aln-secondary)]"></span>
+                  <span className="inline-block h-2 w-2 animate-bounce rounded-full bg-[var(--aln-secondary)] [animation-delay:0.15s]"></span>
+                  <span className="inline-block h-2 w-2 animate-bounce rounded-full bg-[var(--aln-secondary)] [animation-delay:0.3s]"></span>
+                  <span>Loading full document...</span>
+                </div>
+              ) : refFullTextError ? (
+                <div className="space-y-3">
+                  <p className="text-xs text-rose-300">{refFullTextError}</p>
+                  <p className="text-[11px] text-slate-400 uppercase tracking-wide mb-1">Retrieval excerpt (partial):</p>
+                  <p className="text-sm leading-relaxed text-slate-300 whitespace-pre-wrap">
+                    {selectedRef.snippet ? cleanSnippet(selectedRef.snippet) : 'No content available.'}
+                  </p>
+                </div>
+              ) : refFullText ? (
+                <p className="text-sm leading-relaxed text-slate-200 whitespace-pre-wrap">{refFullText}</p>
+              ) : selectedRef.document_id == null ? (
+                <div className="space-y-2">
+                  <p className="text-[11px] text-amber-300/80 uppercase tracking-wide">⚠ Full document not available for this source</p>
+                  <p className="text-[11px] text-slate-400 uppercase tracking-wide mb-1">Retrieval excerpt:</p>
+                  <p className="text-sm leading-relaxed text-slate-300 whitespace-pre-wrap">
+                    {selectedRef.snippet ? cleanSnippet(selectedRef.snippet) : 'No content available.'}
+                  </p>
+                </div>
+              ) : null}
             </div>
 
             {/* Footer close */}
