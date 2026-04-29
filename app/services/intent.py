@@ -42,6 +42,7 @@ ROLE_ALLOWED_DOCUMENT_TYPES = {
         "donor_proposal",
         "integrity_icon",
         "governance_weekly",
+        "internal_policy",
         "meeting_notes",
         "general",
     ],
