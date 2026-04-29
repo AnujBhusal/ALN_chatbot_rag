@@ -551,8 +551,8 @@ export default function App() {
 
   return (
     <div className="min-h-screen text-slate-100">
-      <div className="mx-auto grid min-h-screen w-full max-w-7xl gap-4 px-4 py-6 sm:px-6 lg:grid-cols-[300px_1fr] lg:px-8">
-        <aside className="rounded-2xl border border-white/10 bg-slate-950/60 p-4 backdrop-blur">
+      <div className="mx-auto grid min-h-screen w-full max-w-7xl gap-4 px-4 py-6 sm:px-6 lg:grid-cols-[300px_1fr] lg:px-8 auto-rows-fr">
+        <aside className="h-full rounded-2xl border border-white/10 bg-slate-950/60 p-4 backdrop-blur">
           <div className="mb-4 flex items-center gap-3">
             <img
               src="/logo.jpeg"
@@ -636,7 +636,7 @@ export default function App() {
           </div>
         </aside>
 
-        <section className="flex min-h-0 flex-col rounded-2xl border border-white/10 bg-slate-950/40 p-4 backdrop-blur">
+        <section className="flex h-full flex-col rounded-2xl border border-white/10 bg-slate-950/40 p-4 backdrop-blur">
           {isViewingHistory ? (
             <div className="mb-3 flex items-center justify-between rounded-xl border border-amber-300/30 bg-amber-500/10 px-4 py-2 text-xs text-amber-200">
               <span>Viewing past session — new messages will continue this conversation</span>
