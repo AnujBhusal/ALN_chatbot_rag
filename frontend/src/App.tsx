@@ -189,31 +189,49 @@ function splitForHighlight(
   if (!snippet || !fullText) return null
 
   const clean = cleanSnippet(snippet)
+  if (clean.length < 5) return null
 
-  // 1. Exact match
-  const exactIdx = fullText.indexOf(clean)
-  if (exactIdx !== -1) {
+  // Exact match
+  let idx = fullText.indexOf(clean)
+  if (idx !== -1) {
     return [
-      fullText.slice(0, exactIdx),
-      fullText.slice(exactIdx, exactIdx + clean.length),
-      fullText.slice(exactIdx + clean.length),
+      fullText.slice(0, idx),
+      fullText.slice(idx, idx + clean.length),
+      fullText.slice(idx + clean.length),
     ]
   }
 
-  // 2. Case-insensitive match on first 60 chars of snippet
-  const searchKey = clean.slice(0, 60).toLowerCase()
+  // Case-insensitive match
   const lowerFull = fullText.toLowerCase()
-  const keyIdx = lowerFull.indexOf(searchKey)
-  if (keyIdx !== -1) {
-    const endIdx = Math.min(keyIdx + clean.length, fullText.length)
+  const lowerClean = clean.toLowerCase()
+  idx = lowerFull.indexOf(lowerClean)
+  if (idx !== -1) {
     return [
-      fullText.slice(0, keyIdx),
-      fullText.slice(keyIdx, endIdx),
-      fullText.slice(endIdx),
+      fullText.slice(0, idx),
+      fullText.slice(idx, idx + clean.length),
+      fullText.slice(idx + clean.length),
     ]
   }
 
-  return null
+  // Try searching for first 40 chars (handles joined chunks better)
+  const keyPhrase = lowerClean.slice(0, Math.min(40, lowerClean.length))
+  idx = lowerFull.indexOf(keyPhrase)
+  if (idx !== -1) {
+    // Found it - highlight from this point + reasonable length
+    const highlightLen = Math.min(clean.length + 50, fullText.length - idx)
+    return [
+      fullText.slice(0, idx),
+      fullText.slice(idx, idx + highlightLen),
+      fullText.slice(idx + highlightLen),
+    ]
+  }
+
+  // Last resort: highlight first part of document
+  return [
+    '',
+    fullText.slice(0, Math.min(150, fullText.length)),
+    fullText.slice(150),
+  ]
 }
 
 /**
