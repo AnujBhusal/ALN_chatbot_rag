@@ -481,21 +481,29 @@ async def chat_query(
         logger.info(f"   - Found {len(chunks)} chunks in database")
         ranked_chunks = _rank_database_chunks_for_query(request.query, chunks, limit=8)
         logger.info(f"   - Ranked {len(ranked_chunks)} fallback chunks using query overlap")
-        results = [
-            {
+        
+        # Build document lookup cache to get correct metadata for each chunk
+        doc_cache = {}
+        for chunk in ranked_chunks:
+            if chunk.document_id not in doc_cache:
+                doc = db.query(models.Document).filter(models.Document.id == chunk.document_id).first()
+                doc_cache[chunk.document_id] = doc
+        
+        results = []
+        for chunk in ranked_chunks:
+            doc = doc_cache.get(chunk.document_id)
+            results.append({
                 "id": f"chunk_{chunk.id}",
                 "score": 0.5,
                 "metadata": {
                     "document_id": chunk.document_id,
                     "chunk_id": chunk.id,
                     "text": chunk.chunk_text,
-                    "title": document_context["title"] if document_context else "Untitled Document",
-                    "document_type": document_context["type"] if document_context else "general",
-                    "year": document_context["year"] if document_context else None,
+                    "title": doc.title if doc else "Untitled Document",
+                    "document_type": doc.document_type if doc else "general",
+                    "year": doc.year if doc else None,
                 },
-            }
-            for chunk in ranked_chunks
-        ]
+            })
         context = _build_context_blocks(results)
 
     if not context and requested_document_type:
