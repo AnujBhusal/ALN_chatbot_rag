@@ -52,6 +52,12 @@ def test_query_rewriting():
             ],
             "expected_keywords": ["selected", "awardee"]
         },
+        {
+            "name": "Multiple years stay intact",
+            "query": "list out the awardees from 2016 and 2017",
+            "history": [],
+            "expected_keywords": ["2016", "2017", "awardee"]
+        },
     ]
 
     print("=" * 70)

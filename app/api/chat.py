@@ -491,8 +491,16 @@ async def chat_query(
     
     query_embedding = embedder.embed_texts([rewritten_query])[0]
     logger.debug(f"   - Embedding dimension: {len(query_embedding)}")
-    
-    query_filter = _build_query_filter(requested_document_type, request.role, intent.year, target_document_ids)
+
+    query_years = sorted({int(match) for match in re.findall(r"\b(19\d{2}|20\d{2})\b", f"{request.query} {rewritten_query}")})
+    if len(query_years) > 1:
+        logger.info(f"   ℹ️  Multiple years detected in query: {query_years}. Skipping year filter to avoid over-filtering.")
+
+    year_filter = query_years[0] if len(query_years) == 1 else intent.year
+    if len(query_years) > 1:
+        year_filter = None
+
+    query_filter = _build_query_filter(requested_document_type, request.role, year_filter, target_document_ids)
     logger.debug(f"   - Query filter: {query_filter}")
 
     top_k = 20 if intent.is_summary else 12
@@ -585,6 +593,7 @@ async def chat_query(
     answer_instruction = (
         "Answer primarily using the provided ALN documents. "
         "You may reference earlier turns in chat history for context on follow-ups. "
+        "If the question mentions multiple years, answer each year explicitly rather than collapsing them into one. "
         "If the answer is not in the documents, say 'Not available in ALN documents'."
     )
 
