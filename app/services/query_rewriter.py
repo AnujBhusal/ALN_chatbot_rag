@@ -11,13 +11,17 @@ Handles:
 from typing import List, Dict, Optional
 import logging
 import re
+import json
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-# Domain-specific synonym expansions
-SYNONYMS = {
+# Default in-code synonyms (used as fallback)
+DEFAULT_SYNONYMS = {
     "winners": "awardees recipients honorees",
     "winner": "awardee recipient honoree",
+    "victors": "awardees recipients victors honorees",
+    "victor": "awardee recipient victor honoree",
     "alumni": "past awardees former recipients graduates",
     "alumnis": "past awardees former recipients graduates",
     "alumnus": "past awardee former recipient graduate",
@@ -34,6 +38,37 @@ SYNONYMS = {
     "who": "which people individuals names",
     "program": "Integrity Icon initiative project scheme",
 }
+
+# The runtime synonyms mapping (loaded from data/synonyms.json if available)
+SYNONYMS: Dict[str, str] = {}
+
+
+def _load_synonyms_file() -> None:
+    """Attempt to load synonyms from data/synonyms.json in project root.
+
+    Falls back to DEFAULT_SYNONYMS if file missing or invalid.
+    """
+    global SYNONYMS
+    try:
+        root = Path(__file__).resolve().parents[2]
+        path = root / "data" / "synonyms.json"
+        if path.exists():
+            with open(path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                if isinstance(data, dict):
+                    # normalize keys to lowercase
+                    SYNONYMS = {k.lower(): v for k, v in data.items()}
+                    logger.info(f"Loaded {len(SYNONYMS)} synonyms from {path}")
+                    return
+    except Exception as e:
+        logger.warning(f"Failed to load synonyms file: {e}")
+
+    # fallback
+    SYNONYMS = {k.lower(): v for k, v in DEFAULT_SYNONYMS.items()}
+
+
+# Load synonyms at import time
+_load_synonyms_file()
 
 # Domain keywords to potentially inject
 DOMAIN_KEYWORDS = {
@@ -112,8 +147,19 @@ def _resolve_followup(query: str, chat_history: Optional[List[Dict[str, str]]] =
     last_user_compact = last_user_msg[:100]
     if len(last_user_msg) > 100:
         last_user_compact = last_user_msg[:100].rsplit(" ", 1)[0].strip() + "..."
+    # Try to extract year information from history (e.g., 2019, 2022)
+    year = None
+    year_match = re.search(r"\b(19\d{2}|20\d{2})\b", last_user_msg)
+    if not year_match:
+        year_match = re.search(r"\b(19\d{2}|20\d{2})\b", last_assistant_msg)
+    if year_match:
+        year = year_match.group(1)
 
-    resolved = f"{query} related to {last_user_compact}".strip()
+    # Include a hint about the recent context and any year found
+    if year:
+        resolved = f"{query} related to {last_user_compact} in {year}".strip()
+    else:
+        resolved = f"{query} related to {last_user_compact}".strip()
     logger.debug(f"📝 Follow-up resolved: '{query}' → '{resolved}'")
 
     return resolved

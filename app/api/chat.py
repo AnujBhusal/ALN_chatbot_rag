@@ -23,6 +23,7 @@ from app.services.intent import (
 from app.services.llm import LLMService
 from app.services.memory import MemoryService
 from app.services.query_rewriter import rewrite_query
+from app import config
 from app.services.retrieval import build_source_items, build_summary_context, group_results_by_document
 from app.services.vectorstore import VectorStoreService
 
@@ -434,7 +435,8 @@ async def chat_query(
     
     # Query Rewriting: Improve retrieval with synonym expansion and context resolution
     chat_history = memory.get_history(request.session_id)
-    rewritten_query = rewrite_query(request.query, chat_history, use_llm_rewrite=False)
+    use_llm = config.QUERY_REWRITE_USE_LLM
+    rewritten_query = rewrite_query(request.query, chat_history, use_llm_rewrite=use_llm)
     if not rewritten_query or rewritten_query.strip() == "":
         rewritten_query = request.query
     

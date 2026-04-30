@@ -28,3 +28,5 @@ USE_OLLAMA: bool = os.getenv("USE_OLLAMA", "false").lower() == "true"
 RENDER_ENVIRONMENT = os.getenv("RENDER", "false").lower() == "true"  # True if running on Render
 LOCAL_MODE: bool = os.getenv("LOCAL_MODE", "false").lower() == "true" or not RENDER_ENVIRONMENT
 ENABLE_FOLDER_INGESTION: bool = os.getenv("ENABLE_FOLDER_INGESTION", "true").lower() == "true"
+# Query rewriting: enable LLM-based rewrite (default: false to avoid latency)
+QUERY_REWRITE_USE_LLM: bool = os.getenv("QUERY_REWRITE_USE_LLM", "false").lower() == "true"
