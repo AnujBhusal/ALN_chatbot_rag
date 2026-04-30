@@ -443,6 +443,8 @@ async def chat_query(
     logger.debug(f"   - Searching for top_k={top_k} results...")
     results = vectorstore.query(query_embedding, top_k=top_k, query_filter=query_filter)
     logger.info(f"   ✅ Got {len(results)} results from vector store")
+    if results:
+        logger.debug(f"      Top result score: {results[0].get('score', 'N/A')}")
 
     # Defensive retry: if strict metadata filter yields zero, retry without filter
     # and apply filtering in app logic. This guards against metadata type mismatches.
@@ -473,14 +475,19 @@ async def chat_query(
         results = filtered_results
 
     context = _build_context_blocks(results)
-    logger.debug(f"   - Context blocks built: {len(context)} chars")
+    logger.info(f"   📝 Context built: {len(context)} chars, {context[:100]}...")
 
     if not context and target_document_ids:
-        logger.warning(f"   ⚠️  No context from vector search, checking database chunks...")
+        logger.warning(f"   ⚠️  Empty context from vector search! Checking database chunks...")
         chunks = db.query(models.DocumentChunk).filter(models.DocumentChunk.document_id.in_(target_document_ids)).all()
-        logger.info(f"   - Found {len(chunks)} chunks in database")
+        logger.info(f"   📊 Found {len(chunks)} chunks in database")
+        if chunks:
+            logger.debug(f"      Sample chunk: {chunks[0].chunk_text[:100]}...")
+        
         ranked_chunks = _rank_database_chunks_for_query(request.query, chunks, limit=8)
-        logger.info(f"   - Ranked {len(ranked_chunks)} fallback chunks using query overlap")
+        logger.info(f"   🎯 Ranked {len(ranked_chunks)} fallback chunks for query: '{request.query}'")
+        if ranked_chunks:
+            logger.debug(f"      Top chunk: {ranked_chunks[0].chunk_text[:100]}...")
         
         # Build document lookup cache to get correct metadata for each chunk
         doc_cache = {}
