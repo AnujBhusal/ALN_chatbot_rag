@@ -281,9 +281,6 @@ export default function App() {
   const [currentSessionId, setCurrentSessionId] = useState<string>(() => getOrCreateSessionId())
   const [activeSessionId, setActiveSessionId] = useState<string>(() => getOrCreateSessionId())
 
-  // Ref for auto-scrolling to the latest message
-  const messagesEndRef = useRef<HTMLDivElement>(null)
-
   // Delete confirmation: holds the session_id pending deletion, or null
   const [deleteConfirmId, setDeleteConfirmId] = useState<string | null>(null)
   const [deleteLoading, setDeleteLoading] = useState(false)
@@ -368,11 +365,6 @@ export default function App() {
       active = false
     }
   }, [baseUrl, token])
-
-  // Auto-scroll to bottom whenever messages change or loading state toggles
-  useEffect(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages, isLoading])
 
   // Auto-dismiss toast after 3 seconds
   useEffect(() => {
@@ -1009,8 +1001,6 @@ export default function App() {
               </div>
             ) : null}
             {error ? <p className="text-sm text-rose-300">{error}</p> : null}
-            {/* Sentinel div — scrolled into view on new messages */}
-            <div ref={messagesEndRef} />
           </main>
 
           {/* Status Bar & Input - Fixed at Bottom */}
