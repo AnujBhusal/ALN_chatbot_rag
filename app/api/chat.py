@@ -317,35 +317,77 @@ def _tokenize_for_overlap(text: str) -> set[str]:
 
 
 def _rank_database_chunks_for_query(query: str, chunks: List[models.DocumentChunk], limit: int = 8) -> List[models.DocumentChunk]:
-    """Rank DB chunks by lexical overlap so fallback context is not biased to page 1."""
-    query_tokens = _tokenize_for_overlap(query)
+    """Rank DB chunks by multiple scoring methods (overlap + keyword + length)."""
     if not chunks:
         return []
 
-    scored: List[tuple[float, models.DocumentChunk]] = []
     query_lc = query.lower()
+    query_tokens = _tokenize_for_overlap(query)
+    
+    # Extract key year or number from query (e.g., "2020" from "nominees in 2020")
+    year_match = re.search(r'\b(20\d{2})\b', query)
+    year_keywords = [year_match.group(1)] if year_match else []
+    
+    scored: List[tuple[float, models.DocumentChunk]] = []
+    
     for chunk in chunks:
         text = (chunk.chunk_text or "").strip()
         if not text:
             continue
 
+        text_lc = text.lower()
+        score = 0.0
+        
+        # 1. Exact phrase match (high weight)
+        if query_lc in text_lc and len(query_lc) >= 5:
+            score += 100
+            logger.debug(f"      Exact phrase match: +100")
+        
+        # 2. Year/number match (high weight)
+        for keyword in year_keywords:
+            if keyword in text:
+                score += 50
+                logger.debug(f"      Year match {keyword}: +50")
+        
+        # 3. Token overlap (medium weight)
         chunk_tokens = _tokenize_for_overlap(text)
         overlap = len(query_tokens & chunk_tokens)
-        density = overlap / max(len(query_tokens), 1)
-        phrase_boost = 0.5 if query_lc in text.lower() and len(query_lc) >= 6 else 0.0
-        score = overlap + density + phrase_boost
-        scored.append((score, chunk))
+        if overlap > 0:
+            density = overlap / max(len(query_tokens), 1)
+            token_score = overlap * 10 + density * 5
+            score += token_score
+            logger.debug(f"      Token overlap {overlap}/{len(query_tokens)}: +{token_score}")
+        
+        # 4. Keyword presence (medium weight - for "nominees", "awardees", "recipients", etc)
+        keyword_synonyms = {
+            'nominees': ['nominee', 'nominees', 'recipient', 'awardee', 'recipient'],
+            'award': ['award', 'awardee', 'winner', 'recipient'],
+            'list': ['list', 'include', 'included', 'comprised'],
+            'individuals': ['individual', 'person', 'people', 'officer']
+        }
+        
+        for query_word in query_tokens:
+            if query_word in ['nominee', 'recipients', 'awardee', 'individual', 'people']:
+                for syn in keyword_synonyms.get(query_word, []):
+                    if syn in text_lc:
+                        score += 15
+                        logger.debug(f"      Synonym match '{syn}': +15")
+        
+        # 5. Content length bonus (prefer substantial chunks over tiny ones)
+        if len(text) > 200:
+            score += 5
+        
+        if score > 0:
+            scored.append((score, chunk))
 
     if not scored:
+        logger.debug(f"      No scored chunks, returning first {limit} from database")
         return chunks[:limit]
 
     scored.sort(key=lambda item: item[0], reverse=True)
-    top_scored = [chunk for score, chunk in scored[:limit] if score > 0]
-    if top_scored:
-        return top_scored
-
-    # If query terms are absent across all chunks, keep deterministic fallback.
-    return chunks[:limit]
+    result = [chunk for score, chunk in scored[:limit]]
+    logger.debug(f"      Top 3 scores: {[s for s, _ in scored[:3]]}")
+    return result
 
 
 def _persist_user_chat(
