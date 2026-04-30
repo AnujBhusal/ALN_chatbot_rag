@@ -791,7 +791,7 @@ export default function App() {
                         <div className="flex items-start justify-between gap-2">
                           <div className="flex-1 min-w-0">
                             <p className="text-[10px] uppercase tracking-wide text-slate-400 mb-0.5">
-                              {formattedDate} ÔÇó {conversation.summary.message_count} msgs
+                              {formattedDate} ï¿½ï¿½ï¿½ {conversation.summary.message_count} msgs
                             </p>
                             <p className={`text-xs truncate ${ isActive ? 'text-[var(--aln-secondary)]' : 'text-slate-200' }`}>
                               {clip(conversation.summary.first_message, 90)}
@@ -805,7 +805,7 @@ export default function App() {
                         </div>
                       </button>
 
-                      {/* Delete button ÔÇö appears on hover */}
+                      {/* Delete button ï¿½ï¿½ï¿½ appears on hover */}
                       <button
                         type="button"
                         title="Delete this chat"
@@ -829,7 +829,7 @@ export default function App() {
           </div>
         </aside>
 
-        {/* ÔöÇÔöÇ Confirmation Dialog ÔöÇÔöÇ */}
+        {/* ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ Confirmation Dialog ï¿½ï¿½ï¿½ï¿½ï¿½ï¿½ */}
         {deleteConfirmId ? (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: 'rgba(2,6,23,0.75)', backdropFilter: 'blur(4px)' }}>
             <div className="w-full max-w-sm rounded-2xl border border-white/10 bg-slate-900 p-6 shadow-2xl">
@@ -872,7 +872,7 @@ export default function App() {
           <header className="flex-shrink-0 border-b border-white/10 bg-slate-950/50 p-4 rounded-t-2xl">
             {isViewingHistory ? (
               <div className="mb-3 flex items-center justify-between rounded-lg border border-amber-300/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
-                <span>Viewing past session ÔÇö new messages will continue this conversation</span>
+                <span>Viewing past session ï¿½ï¿½ï¿½ new messages will continue this conversation</span>
                 <button
                   type="button"
                   onClick={startNewChat}
@@ -926,7 +926,7 @@ export default function App() {
                     : 'mr-auto bg-slate-800/80'
                 }`}
               >
-                {/* Render content ÔÇö [Ref N] tokens become clickable buttons */}
+                {/* Render content ï¿½ï¿½ï¿½ [Ref N] tokens become clickable buttons */}
                 {(() => {
                   const parts = message.content.split(/(\[Ref \d+\])/g)
                   return (
@@ -997,7 +997,7 @@ export default function App() {
                           <p className="font-medium text-slate-100">Ref {index + 1}: {source.title}</p>
                           <p className="text-[11px] uppercase tracking-wide text-slate-300">
                             {formatDocumentType(source.type)}
-                            {source.year ? ` ÔÇó ${source.year}` : ''}
+                            {source.year ? ` ï¿½ï¿½ï¿½ ${source.year}` : ''}
                           </p>
                           {source.snippet ? (
                             <p className="mt-1 text-slate-300">"{cleanSnippet(source.snippet)}"</p>
@@ -1079,7 +1079,7 @@ export default function App() {
         </section>
       </div>
 
-      {/* ÔöÇÔöÇ Toast Notification ÔöÇÔöÇ */}
+      {/* â”€â”€ Toast Notification â”€â”€ */}
       {toast ? (
         <div
           className={`fixed bottom-6 left-1/2 z-50 -translate-x-1/2 rounded-xl px-5 py-3 text-sm font-medium shadow-2xl border transition-all duration-300 ${
@@ -1088,12 +1088,12 @@ export default function App() {
               : 'bg-rose-900/90 border-rose-500/40 text-rose-100'
           }`}
         >
-          {toast.toLowerCase().includes('deleted') || toast.toLowerCase().includes('success') ? 'Ô£ô ' : 'Ô£ò '}
+          {toast.toLowerCase().includes('deleted') || toast.toLowerCase().includes('success') ? 'âœ“ ' : 'âœ• '}
           {toast}
         </div>
       ) : null}
 
-      {/* ÔöÇÔöÇ Reference Detail Modal ÔöÇÔöÇ */}
+      {/* â”€â”€ Reference Detail Modal â”€â”€ */}
       {selectedRef ? (
         <div
           className="fixed inset-0 z-50 flex items-center justify-center p-4"
@@ -1130,7 +1130,7 @@ export default function App() {
                 <h2 className="text-sm font-semibold text-slate-100 leading-snug">{selectedRef.title}</h2>
                 <p className="mt-0.5 text-[11px] uppercase tracking-wide text-slate-400">
                   {formatDocumentType(selectedRef.type)}
-                  {selectedRef.year ? ` ÔÇó ${selectedRef.year}` : ''}
+                  {selectedRef.year ? ` ï¿½ï¿½ï¿½ ${selectedRef.year}` : ''}
                 </p>
               </div>
             </div>
@@ -1159,7 +1159,7 @@ export default function App() {
                 renderHighlightedText(refFullText, selectedRef.snippet, refHighlightRef as React.RefObject<HTMLElement>)
               ) : selectedRef.document_id == null ? (
                 <div className="space-y-2">
-                  <p className="text-[11px] text-amber-300/80 uppercase tracking-wide">ÔÜá Full document not available for this source</p>
+                  <p className="text-[11px] text-amber-300/80 uppercase tracking-wide">ï¿½ï¿½ï¿½ Full document not available for this source</p>
                   <p className="text-[11px] text-slate-400 uppercase tracking-wide mb-1">Retrieval excerpt:</p>
                   <p className="text-sm leading-relaxed text-slate-300 whitespace-pre-wrap">
                     {selectedRef.snippet ? cleanSnippet(selectedRef.snippet) : 'No content available.'}
