@@ -767,7 +767,11 @@ export default function App() {
               {Array.isArray(historyMessages) && historyMessages.length > 0 ? (
                 historyMessages.map((conversation) => {
                   const isActive = activeSessionId === conversation.summary.session_id
-                  const formattedDate = new Date(conversation.summary.created_at).toLocaleString('en-US', {
+                  // Ensure timestamp has Z suffix for UTC parsing, then convert to user's local timezone
+                  const isoString = conversation.summary.created_at.endsWith('Z') 
+                    ? conversation.summary.created_at 
+                    : `${conversation.summary.created_at}Z`
+                  const formattedDate = new Date(isoString).toLocaleString(undefined, {
                     month: 'short',
                     day: 'numeric',
                     hour: '2-digit',
