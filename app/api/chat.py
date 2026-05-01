@@ -22,6 +22,8 @@ from app.services.intent import (
 )
 from app.services.llm import LLMService
 from app.services.memory import MemoryService
+from app.services.query_rewriter import rewrite_query
+from app import config
 from app.services.retrieval import build_source_items, build_summary_context, group_results_by_document
 from app.services.vectorstore import VectorStoreService
 
@@ -430,6 +432,17 @@ async def chat_query(
     target_document_ids: List[int] = []
 
     intent = detect_intent(request.query)
+    
+    # Query Rewriting: Improve retrieval with synonym expansion and context resolution
+    chat_history = memory.get_history(request.session_id)
+    use_llm = config.QUERY_REWRITE_USE_LLM
+    rewritten_query = rewrite_query(request.query, chat_history, use_llm_rewrite=use_llm)
+    if not rewritten_query or rewritten_query.strip() == "":
+        rewritten_query = request.query
+    
+    logger.info(f"📋 Original Query: {request.query}")
+    logger.info(f"🔄 Rewritten Query: {rewritten_query}")
+    
     requested_document_type = request.document_type or intent.document_type
     force_general_mode = request.mode == "general"
 
@@ -471,14 +484,23 @@ async def chat_query(
             document_context = _build_document_context(latest_document)
 
     logger.debug(f"🔍 Query: {request.query}")
+    logger.debug(f"   - Rewritten for retrieval: {rewritten_query}")
     logger.debug(f"   - Target document IDs: {target_document_ids}")
     logger.debug(f"   - Requested type: {requested_document_type}")
     logger.debug(f"   - Role: {request.role}")
     
-    query_embedding = embedder.embed_texts([request.query])[0]
+    query_embedding = embedder.embed_texts([rewritten_query])[0]
     logger.debug(f"   - Embedding dimension: {len(query_embedding)}")
-    
-    query_filter = _build_query_filter(requested_document_type, request.role, intent.year, target_document_ids)
+
+    query_years = sorted({int(match) for match in re.findall(r"\b(19\d{2}|20\d{2})\b", f"{request.query} {rewritten_query}")})
+    if len(query_years) > 1:
+        logger.info(f"   ℹ️  Multiple years detected in query: {query_years}. Skipping year filter to avoid over-filtering.")
+
+    year_filter = query_years[0] if len(query_years) == 1 else intent.year
+    if len(query_years) > 1:
+        year_filter = None
+
+    query_filter = _build_query_filter(requested_document_type, request.role, year_filter, target_document_ids)
     logger.debug(f"   - Query filter: {query_filter}")
 
     top_k = 20 if intent.is_summary else 12
@@ -526,8 +548,8 @@ async def chat_query(
         if chunks:
             logger.debug(f"      Sample chunk: {chunks[0].chunk_text[:100]}...")
         
-        ranked_chunks = _rank_database_chunks_for_query(request.query, chunks, limit=8)
-        logger.info(f"   🎯 Ranked {len(ranked_chunks)} fallback chunks for query: '{request.query}'")
+        ranked_chunks = _rank_database_chunks_for_query(rewritten_query, chunks, limit=8)
+        logger.info(f"   🎯 Ranked {len(ranked_chunks)} fallback chunks for rewritten query: '{rewritten_query}'")
         if ranked_chunks:
             logger.debug(f"      Top chunk: {ranked_chunks[0].chunk_text[:100]}...")
         
@@ -571,6 +593,7 @@ async def chat_query(
     answer_instruction = (
         "Answer primarily using the provided ALN documents. "
         "You may reference earlier turns in chat history for context on follow-ups. "
+        "If the question mentions multiple years, answer each year explicitly rather than collapsing them into one. "
         "If the answer is not in the documents, say 'Not available in ALN documents'."
     )
 
