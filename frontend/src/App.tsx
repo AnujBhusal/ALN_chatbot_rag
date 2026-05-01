@@ -767,12 +767,12 @@ export default function App() {
               {Array.isArray(historyMessages) && historyMessages.length > 0 ? (
                 historyMessages.map((conversation) => {
                   const isActive = activeSessionId === conversation.summary.session_id
-                  const formattedDate = new Date(conversation.summary.created_at).toLocaleDateString('en-US', {
+                  const formattedDate = new Date(conversation.summary.created_at).toLocaleString('en-US', {
                     month: 'short',
                     day: 'numeric',
                     hour: '2-digit',
                     minute: '2-digit',
-                  } as any)
+                  })
 
                   return (
                     <div
@@ -791,7 +791,7 @@ export default function App() {
                         <div className="flex items-start justify-between gap-2">
                           <div className="flex-1 min-w-0">
                             <p className="text-[10px] uppercase tracking-wide text-slate-400 mb-0.5">
-                              {formattedDate} ��� {conversation.summary.message_count} msgs
+                              {formattedDate} • {conversation.summary.message_count} msgs
                             </p>
                             <p className={`text-xs truncate ${ isActive ? 'text-[var(--aln-secondary)]' : 'text-slate-200' }`}>
                               {clip(conversation.summary.first_message, 90)}
@@ -805,7 +805,7 @@ export default function App() {
                         </div>
                       </button>
 
-                      {/* Delete button ��� appears on hover */}
+                      {/* Delete button • appears on hover */}
                       <button
                         type="button"
                         title="Delete this chat"
@@ -829,7 +829,7 @@ export default function App() {
           </div>
         </aside>
 
-        {/* ������ Confirmation Dialog ������ */}
+        {/* •• Confirmation Dialog •• */}
         {deleteConfirmId ? (
           <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: 'rgba(2,6,23,0.75)', backdropFilter: 'blur(4px)' }}>
             <div className="w-full max-w-sm rounded-2xl border border-white/10 bg-slate-900 p-6 shadow-2xl">
@@ -872,7 +872,7 @@ export default function App() {
           <header className="flex-shrink-0 border-b border-white/10 bg-slate-950/50 p-4 rounded-t-2xl">
             {isViewingHistory ? (
               <div className="mb-3 flex items-center justify-between rounded-lg border border-amber-300/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-200">
-                <span>Viewing past session ��� new messages will continue this conversation</span>
+                <span>Viewing past session • new messages will continue this conversation</span>
                 <button
                   type="button"
                   onClick={startNewChat}
@@ -926,7 +926,7 @@ export default function App() {
                     : 'mr-auto bg-slate-800/80'
                 }`}
               >
-                {/* Render content ��� [Ref N] tokens become clickable buttons */}
+                {/* Render content • [Ref N] tokens become clickable buttons */}
                 {(() => {
                   const parts = message.content.split(/(\[Ref \d+\])/g)
                   return (
@@ -997,7 +997,7 @@ export default function App() {
                           <p className="font-medium text-slate-100">Ref {index + 1}: {source.title}</p>
                           <p className="text-[11px] uppercase tracking-wide text-slate-300">
                             {formatDocumentType(source.type)}
-                            {source.year ? ` ��� ${source.year}` : ''}
+                            {source.year ? ` • ${source.year}` : ''}
                           </p>
                           {source.snippet ? (
                             <p className="mt-1 text-slate-300">"{cleanSnippet(source.snippet)}"</p>
@@ -1130,7 +1130,7 @@ export default function App() {
                 <h2 className="text-sm font-semibold text-slate-100 leading-snug">{selectedRef.title}</h2>
                 <p className="mt-0.5 text-[11px] uppercase tracking-wide text-slate-400">
                   {formatDocumentType(selectedRef.type)}
-                  {selectedRef.year ? ` ��� ${selectedRef.year}` : ''}
+                  {selectedRef.year ? ` • ${selectedRef.year}` : ''}
                 </p>
               </div>
             </div>
@@ -1159,7 +1159,7 @@ export default function App() {
                 renderHighlightedText(refFullText, selectedRef.snippet, refHighlightRef as React.RefObject<HTMLElement>)
               ) : selectedRef.document_id == null ? (
                 <div className="space-y-2">
-                  <p className="text-[11px] text-amber-300/80 uppercase tracking-wide">��� Full document not available for this source</p>
+                  <p className="text-[11px] text-amber-300/80 uppercase tracking-wide">• Full document not available for this source</p>
                   <p className="text-[11px] text-slate-400 uppercase tracking-wide mb-1">Retrieval excerpt:</p>
                   <p className="text-sm leading-relaxed text-slate-300 whitespace-pre-wrap">
                     {selectedRef.snippet ? cleanSnippet(selectedRef.snippet) : 'No content available.'}
