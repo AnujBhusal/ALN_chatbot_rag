@@ -174,33 +174,43 @@ def _parse_optional_int(value: str | None) -> int | None:
 
 
 def normalize_extracted_text(text: str) -> str:
-    """Clean noisy whitespace produced by PDF extraction."""
-    # Repair common UTF-8 -> Latin-1 mojibake sequences (e.g., â€™).
+    """Clean noisy whitespace and encoding issues from PDF extraction."""
+    # Handle UTF-8 encoding errors first
     try:
-        repaired = text.encode("latin-1", errors="ignore").decode("utf-8", errors="replace")
-        if repaired and repaired.count("â") < text.count("â"):
-            text = repaired
+        # Encode as UTF-8 and decode to fix mojibake
+        if isinstance(text, str):
+            text = text.encode('utf-8', errors='ignore').decode('utf-8', errors='replace')
     except Exception:
         pass
-
+    
+    # Common UTF-8 mojibake replacements
     replacements = {
-        "\u00e2\u0080\u0099": "'",  # â€™
-        "\u00e2\u0080\u009c": '"',  # â€œ
-        "\u00e2\u0080\u009d": '"',  # â€
-        "\u00e2\u0080\u0093": "-",  # â€" (en dash)
-        "\u00e2\u0080\u0094": "-",  # â€" (em dash)
-        "\u00e2\u0080": '"',        # â€
-        "\u00e2": "",               # â
+        "\u00e2\u0080\u0099": "'",  # â€™ → '
+        "\u00e2\u0080\u009c": '"',  # â€œ → "
+        "\u00e2\u0080\u009d": '"',  # â€ → "
+        "\u00e2\u0080\u0093": "-",  # â€" → - (en dash)
+        "\u00e2\u0080\u0094": "-",  # â€" → - (em dash)
+        "\u00e2\u0080\u0098": "'",  # â€˜ → '
+        "\u00e2": "",               # Remove stray â
+        "\u009f": "",               # Remove stray control chars
+        "\u0092": "'",              # Windows smart quote
+        "\u0091": "'",              # Windows smart quote
+        "\u0093": '"',              # Windows smart quote
+        "\u0094": '"',              # Windows smart quote
     }
     for bad, good in replacements.items():
         text = text.replace(bad, good)
-
-    # Fix remaining patterns like Nepalâs -> Nepal's.
-    text = re.sub(r"â([A-Za-z])", r"'\1", text)
-    text = re.sub(r"\sâ\s", " - ", text)
-
-    text = re.sub(r"\n\s*\n+", " ", text)
-    text = re.sub(r"\s+", " ", text)
+    
+    # Fix patterns like "Nepalâs" → "Nepal's"
+    text = re.sub(r"([a-zA-Z])â([a-zA-Z])", r"\1'\2", text)
+    
+    # Remove remaining invalid unicode characters (replace with space)
+    text = ''.join(c if ord(c) < 128 or ord(c) > 127 and c.isprintable() else ' ' for c in text)
+    
+    # Normalize whitespace
+    text = re.sub(r"\n\s*\n+", " ", text)  # Multiple newlines → space
+    text = re.sub(r"\s+", " ", text)       # Multiple spaces → single space
+    
     return text.strip()
 
 
