@@ -12,44 +12,53 @@ from pathlib import Path
 BACKEND_URL = "https://aln-chatbot-rag.onrender.com/api/ingest/upload"
 
 # PDF files with their metadata
-PDFS = [
-    {
-        "file": "Internal_Policy.pdf",
-        "title": "Internal Policy",
-        "document_type": "policy",
-        "year": 2024,
-    },
-    {
-        "file": "Meeting_Notes.pdf",
-        "title": "Meeting Notes",
-        "document_type": "meeting",
-        "year": 2024,
-    },
-    {
-        "file": "General_Document.pdf",
-        "title": "General Document",
-        "document_type": "general",
-        "year": 2024,
-    },
-    {
-        "file": "Donor_Proposal.pdf",
-        "title": "Donor Proposal",
-        "document_type": "proposal",
-        "year": 2024,
-    },
-    {
-        "file": "Governance_Weekly.pdf",
-        "title": "Governance Weekly",
-        "document_type": "governance",
-        "year": 2024,
-    },
-    {
-        "file": "Integrity_Icon.pdf",
-        "title": "Integrity Icon",
-        "document_type": "integrity",
-        "year": 2024,
-    },
-]
+from typing import List
+
+
+def discover_pdfs(directory: str = "data/pdfs") -> List[dict]:
+    """Discover PDF files under `data/pdfs` and generate simple metadata.
+
+    - Title is derived from filename (stem, underscores/hyphens -> spaces).
+    - document_type and year are guessed from filename when possible.
+    """
+    pdf_dir = Path(directory)
+    found: List[dict] = []
+    if not pdf_dir.exists():
+        print(f"⚠️ PDF directory not found: {pdf_dir} — no files will be uploaded")
+        return found
+
+    for p in sorted(pdf_dir.glob("*.pdf")):
+        stem = p.stem
+        title = stem.replace("_", " ").replace("-", " ")
+        lower = stem.lower()
+
+        # simple heuristics for document type
+        if "meeting" in lower or "minutes" in lower:
+            doc_type = "meeting"
+        elif "policy" in lower:
+            doc_type = "policy"
+        elif "proposal" in lower or "donor" in lower:
+            doc_type = "proposal"
+        elif "governance" in lower:
+            doc_type = "governance"
+        elif "integrity" in lower:
+            doc_type = "integrity"
+        else:
+            doc_type = "general"
+
+        # try to find a 4-digit year in the filename
+        import re
+
+        year_match = re.search(r"(20\d{2}|19\d{2})", stem)
+        year = int(year_match.group(0)) if year_match else 2024
+
+        found.append({"file": p.name, "title": title, "document_type": doc_type, "year": year})
+
+    return found
+
+
+# Discover PDFs from data/pdfs by default
+PDFS = discover_pdfs()
 
 def ingest_pdfs():
     """Upload all PDFs to the backend."""

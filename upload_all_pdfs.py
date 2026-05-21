@@ -11,16 +11,16 @@ import time
 
 BASE_URL = "https://aln-chatbot-rag.onrender.com/api"
 
-# All PDFs in the project
-PDFS = [
-    {"path": "Assessment Brief 2024-5 CMP6230 Data Management and MLops.pdf", "title": "Assessment Brief CMP6230"},
-    {"path": "General_Document.pdf", "title": "General Document"},
-    {"path": "Donor_Proposal.pdf", "title": "Donor Proposal"},
-    {"path": "Meeting_Notes.pdf", "title": "Meeting Notes"},
-    {"path": "Internal_Policy.pdf", "title": "Internal Policy"},
-    {"path": "Integrity_Icon.pdf", "title": "Integrity Icon"},
-    {"path": "Governance_Weekly.pdf", "title": "Governance Weekly"},
-]
+from pathlib import Path as _Path
+
+# Discover PDFs under `data/pdfs` only
+PDF_DIR = _Path("data/pdfs")
+PDFS = []
+if PDF_DIR.exists():
+    for p in sorted(PDF_DIR.glob("*.pdf")):
+        PDFS.append({"path": str(p), "title": p.stem.replace("_", " ").replace("-", " ")})
+else:
+    print(f"⚠️ PDF directory not found: {PDF_DIR} — no files will be uploaded")
 
 print("=" * 80)
 print("📚 COMPREHENSIVE PDF UPLOAD MANAGER FOR RENDER")
