@@ -17,12 +17,29 @@ def group_results_by_document(results: List[Dict[str, Any]]) -> List[Dict[str, A
                 "type": metadata.get("document_type", "general"),
                 "year": metadata.get("year"),
                 "sources": [],
+                "_score_sum": 0.0,
             }
             existing = grouped[document_id]
 
         existing["sources"].append(result)
 
-    return list(grouped.values())
+        # Accumulate document-level score if available on the result
+        try:
+            score = float(result.get("score", 0) or 0)
+        except Exception:
+            score = 0.0
+        existing["_score_sum"] = existing.get("_score_sum", 0.0) + score
+
+    # Convert grouped dict to list and sort by aggregated score desc
+    grouped_list = list(grouped.values())
+    grouped_list.sort(key=lambda g: g.get("_score_sum", 0.0), reverse=True)
+
+    # Remove internal score field before returning
+    for g in grouped_list:
+        if "_score_sum" in g:
+            g.pop("_score_sum")
+
+    return grouped_list
 
 
 def build_source_items(results: List[Dict[str, Any]], limit: int = 5) -> List[Dict[str, Any]]:
