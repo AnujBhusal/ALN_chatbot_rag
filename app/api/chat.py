@@ -515,8 +515,9 @@ async def chat_query(
         logger.debug("   🔎 Raw vector matches (top 8):")
         for r in results[:8]:
             md = r.get("metadata", {}) or {}
+            snippet = ((md.get('text') or '')[:80]).replace('\n', ' ')
             logger.debug(
-                f"      - doc_id={md.get('document_id')} score={r.get('score', 0):.4f} title={(md.get('title') or '')[:60]} snippet={((md.get('text') or '')[:80]).replace('\n',' ')}"
+                f"      - doc_id={md.get('document_id')} score={r.get('score', 0):.4f} title={(md.get('title') or '')[:60]} snippet={snippet}"
             )
     except Exception:
         logger.debug("   ⚠️  Could not log raw vector matches")
