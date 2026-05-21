@@ -423,8 +423,10 @@ export default function App() {
         }
 
         setDocuments(data)
+        // Do not auto-select the first document. Leave `selectedDocumentId` as null
+        // so the default behaviour in Document mode is to query across ALL documents.
         if (data.length > 0) {
-          setSelectedDocumentId((current) => current ?? data[0].id)
+          // keep selectedDocumentId as-is (null => All Documents)
         }
       } catch {
         if (isMounted) {
@@ -604,7 +606,7 @@ export default function App() {
           mode,
           document_id: mode === 'documents' ? selectedDocumentId : null,
           document_type: null,
-          use_latest_document: mode === 'documents',
+          use_latest_document: false,
         }),
       })
 
@@ -1040,9 +1042,12 @@ export default function App() {
                   ) : documents.length > 0 ? (
                     <select
                       value={selectedDocumentId ?? ''}
-                      onChange={(event) => setSelectedDocumentId(Number(event.target.value))}
+                      onChange={(event) =>
+                        setSelectedDocumentId(event.target.value === '' ? null : Number(event.target.value))
+                      }
                       className="max-w-[22rem] rounded-lg border border-white/20 bg-slate-900/80 px-2 py-1 text-slate-100"
                     >
+                      <option value="">All Documents</option>
                       {documents.map((doc) => (
                         <option key={doc.id} value={doc.id}>
                           {doc.title} ({doc.filename})
@@ -1062,18 +1067,24 @@ export default function App() {
               </span>
             </div>
 
-            <form onSubmit={handleSubmit} className="flex gap-2">
+                <form onSubmit={handleSubmit} className="flex gap-2">
               <input
                 type="text"
                 value={input}
                 onChange={(event) => setInput(event.target.value)}
                 className="flex-1 rounded-xl border border-white/20 bg-slate-900/80 px-4 py-3 text-sm text-slate-100 outline-none ring-[var(--aln-secondary)] transition focus:ring-2"
-                placeholder={mode === 'general' ? 'Ask anything...' : 'Ask from selected PDF...'}
+                placeholder={
+                  mode === 'general'
+                    ? 'Ask anything...'
+                    : selectedDocumentId
+                    ? 'Ask from selected PDF...'
+                    : 'Ask from all PDFs...'
+                }
                 disabled={isLoading}
               />
               <button
                 type="submit"
-                disabled={isLoading || !input.trim() || (mode === 'documents' && !selectedDocumentId)}
+                    disabled={isLoading || !input.trim()}
                 className="rounded-xl bg-[var(--aln-primary)] px-5 py-3 text-sm font-medium text-white transition hover:brightness-105 disabled:cursor-not-allowed disabled:opacity-60"
               >
                 Send
