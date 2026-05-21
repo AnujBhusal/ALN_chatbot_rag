@@ -510,6 +510,17 @@ async def chat_query(
     if results:
         logger.debug(f"      Top result score: {results[0].get('score', 'N/A')}")
 
+    # Debug: log a compact view of raw matches (document_id, score, title snippet)
+    try:
+        logger.debug("   🔎 Raw vector matches (top 8):")
+        for r in results[:8]:
+            md = r.get("metadata", {}) or {}
+            logger.debug(
+                f"      - doc_id={md.get('document_id')} score={r.get('score', 0):.4f} title={(md.get('title') or '')[:60]} snippet={((md.get('text') or '')[:80]).replace('\n',' ')}"
+            )
+    except Exception:
+        logger.debug("   ⚠️  Could not log raw vector matches")
+
     # Defensive retry: if strict metadata filter yields zero, retry without filter
     # and apply filtering in app logic. This guards against metadata type mismatches.
     if not results and query_filter is not None:
@@ -574,8 +585,24 @@ async def chat_query(
     except Exception as e:
         logger.debug(f"   ⚠️  Title-boosting failed: {e}")
 
+    # Group results by document and build context blocks.
+    grouped_results = group_results_by_document(results)
+
+    # Debug: log grouped document scores/titles (compact)
+    try:
+        logger.debug("   📚 Grouped documents (order):")
+        for g in grouped_results[:8]:
+            # compute preview of top chunk
+            top_chunk = (g.get('sources') or [])[:1]
+            top_text = ''
+            if top_chunk:
+                top_text = (top_chunk[0].get('metadata', {}) or {}).get('text', '')[:120].replace('\n',' ')
+            logger.debug(f"      - doc_id={g.get('document_id')} title={(g.get('title') or '')[:60]} top_snippet={top_text}")
+    except Exception:
+        logger.debug("   ⚠️  Could not log grouped documents")
+
     context = _build_context_blocks(results)
-    logger.info(f"   📝 Context built: {len(context)} chars, {context[:100]}...")
+    logger.info(f"   📝 Context built length: {len(context)} chars")
 
     if not context and target_document_ids:
         logger.warning(f"   ⚠️  Empty context from vector search! Checking database chunks...")
