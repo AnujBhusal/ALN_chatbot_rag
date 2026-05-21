@@ -437,6 +437,7 @@ async def cleanup_duplicates(db: Session = Depends(get_db)) -> dict:
     # Find and delete duplicates
     deleted_doc_ids = []
     deleted_chunk_count = 0
+    pinecone_deleted_count = 0
     
     for title, docs in by_title.items():
         if len(docs) > 1:
@@ -455,13 +456,26 @@ async def cleanup_duplicates(db: Session = Depends(get_db)) -> dict:
                 db.delete(old_doc)
     
     db.commit()
-    logger.info(f"✅ Cleanup complete: Deleted {len(deleted_doc_ids)} documents, {deleted_chunk_count} chunks")
+    
+    # 🔥 NEW: Delete vectors from Pinecone for all deleted documents
+    logger.info(f"📤 Cleaning up Pinecone vectors for {len(deleted_doc_ids)} documents...")
+    for doc_id in deleted_doc_ids:
+        try:
+            vectorstore.delete_by_document_id(doc_id)
+            pinecone_deleted_count += 1
+            logger.info(f"   ✅ Deleted Pinecone vectors for document {doc_id}")
+        except Exception as e:
+            logger.warning(f"   ⚠️  Pinecone deletion failed for document {doc_id}: {e}")
+    
+    logger.info(f"✅ Cleanup complete: Deleted {len(deleted_doc_ids)} documents, {deleted_chunk_count} chunks, {pinecone_deleted_count} Pinecone syncs")
     
     return {
-        "message": "Duplicate cleanup complete",
+        "message": "Duplicate cleanup complete (database + Pinecone)",
         "deleted_documents": deleted_doc_ids,
         "total_deleted": len(deleted_doc_ids),
         "total_chunks_deleted": deleted_chunk_count,
+        "pinecone_cleaned": pinecone_deleted_count,
+        "pinecone_sync_status": "complete" if pinecone_deleted_count == len(deleted_doc_ids) else "partial"
     }
 
 
@@ -526,13 +540,24 @@ async def delete_document(document_id: int, db: Session = Depends(get_db)) -> di
         db.delete(document)
         db.commit()
         
-        logger.info(f"✅ Deleted document {document_id} ({chunk_count} chunks removed)")
+        # 🔥 NEW: Delete vectors from Pinecone
+        logger.info(f"📤 Cleaning up Pinecone vectors...")
+        try:
+            vectorstore.delete_by_document_id(document_id)
+            logger.info(f"   ✅ Deleted Pinecone vectors for document {document_id}")
+            pinecone_status = "cleaned"
+        except Exception as e:
+            logger.warning(f"   ⚠️  Pinecone deletion failed: {e}")
+            pinecone_status = "failed"
+        
+        logger.info(f"✅ Deleted document {document_id} ({chunk_count} chunks removed) - Pinecone: {pinecone_status}")
         
         return {
-            "message": f"Document {document_id} deleted",
+            "message": f"Document {document_id} deleted from both database and Pinecone",
             "document_id": document_id,
             "title": document.title,
-            "chunks_deleted": chunk_count
+            "chunks_deleted": chunk_count,
+            "pinecone_cleaned": pinecone_status
         }
     
     except HTTPException:
