@@ -538,6 +538,42 @@ async def chat_query(
         logger.info(f"   ✅ Filtered to {len(filtered_results)} results from target documents")
         results = filtered_results
 
+    # If the user query mentions a specific document title or contains strong title tokens,
+    # prefer documents whose title matches the query. Reorder `results` so matching
+    # documents appear earlier when building the multi-document context.
+    try:
+        q_text = (request.query or "").lower()
+        favored_doc_ids = set()
+        for r in results:
+            meta = r.get("metadata", {}) or {}
+            title = (meta.get("title") or "").lower()
+            if not title:
+                continue
+            # Exact substring match is strongest
+            if title in q_text:
+                doc_id = _coerce_document_id(meta.get("document_id"))
+                if doc_id is not None:
+                    favored_doc_ids.add(doc_id)
+                continue
+            # Token overlap: split title into words and check if any appear in query
+            for token in re.findall(r"[a-z0-9]{4,}", title):
+                if token and token in q_text:
+                    doc_id = _coerce_document_id(meta.get("document_id"))
+                    if doc_id is not None:
+                        favored_doc_ids.add(doc_id)
+                        break
+
+        if favored_doc_ids:
+            logger.info(f"   ℹ️  Boosting documents by title match: {favored_doc_ids}")
+            # Place favored results first while preserving relative ordering by score afterward
+            def _fav_key(item: dict):
+                did = _coerce_document_id((item.get("metadata") or {}).get("document_id"))
+                return (0 if did in favored_doc_ids else 1, -float(item.get("score", 0) or 0))
+
+            results.sort(key=_fav_key)
+    except Exception as e:
+        logger.debug(f"   ⚠️  Title-boosting failed: {e}")
+
     context = _build_context_blocks(results)
     logger.info(f"   📝 Context built: {len(context)} chars, {context[:100]}...")
 
