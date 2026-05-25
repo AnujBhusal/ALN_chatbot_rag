@@ -454,9 +454,11 @@ async def cleanup_duplicates(db: Session = Depends(get_db)) -> dict:
                     logger.info(f"   ✅ Deleted Pinecone vectors for document {old_doc.id} by ids")
                     pinecone_deleted_docs.append(old_doc.id)
                 except Exception as e:
-                        logger.warning(f"   ⚠️  Pinecone id-based deletion failed for document {old_doc.id}: {e}")
+                    logger.warning(
+                        f"   ⚠️  Pinecone id-based deletion failed for document {old_doc.id}: {e}"
+                    )
 
-                    logger.info(f"      Keeping ID {keep_doc.id} for key '{dedupe_key}'")
+            logger.info(f"      Keeping ID {keep_doc.id} for key '{dedupe_key}'")
     
     db.commit()
     
