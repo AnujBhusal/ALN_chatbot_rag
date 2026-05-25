@@ -233,6 +233,30 @@ def _build_document_context(document: Optional[models.Document]) -> Optional[Dic
     }
 
 
+def _get_active_document_ids(db: Session, role: str) -> set[int]:
+    """Return the latest completed document for each filename so stale duplicates are ignored."""
+    docs = (
+        db.query(models.Document)
+        .filter(models.Document.ingestion_state == "completed")
+        .order_by(models.Document.uploaded_at.desc(), models.Document.id.desc())
+        .all()
+    )
+
+    active_ids: set[int] = set()
+    seen_filenames: set[str] = set()
+    for doc in docs:
+        if not can_access_document_type(role, doc.document_type):
+            continue
+
+        filename_key = (doc.filename or doc.title or str(doc.id)).strip().lower()
+        if filename_key in seen_filenames:
+            continue
+        seen_filenames.add(filename_key)
+        active_ids.add(doc.id)
+
+    return active_ids
+
+
 def _build_context_blocks(results: List[Dict[str, Any]], chunks_per_doc: int = 3) -> str:
     grouped = group_results_by_document(results)
     blocks: List[str] = []
@@ -521,6 +545,23 @@ async def chat_query(
             )
     except Exception:
         logger.debug("   ⚠️  Could not log raw vector matches")
+
+    # In all-documents mode, ignore stale duplicate documents by only allowing the latest
+    # completed document for each filename. This keeps old PDFs out of reference citations.
+    if request.mode == "documents" and request.document_id is None:
+        active_document_ids = _get_active_document_ids(db, request.role)
+        if active_document_ids:
+            before_count = len(results)
+            results = [
+                result
+                for result in results
+                if _coerce_document_id((result.get("metadata") or {}).get("document_id")) in active_document_ids
+            ]
+            logger.info(
+                f"   ✅ Active document filter kept {len(results)}/{before_count} Pinecone results (latest completed per filename)"
+            )
+        else:
+            logger.warning("   ⚠️  No active documents found for filtering")
 
     # Defensive retry: if strict metadata filter yields zero, retry without filter
     # and apply filtering in app logic. This guards against metadata type mismatches.
