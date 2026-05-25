@@ -552,23 +552,6 @@ async def chat_query(
     except Exception:
         logger.debug("   ⚠️  Could not log raw vector matches")
 
-    # In all-documents mode, ignore stale duplicate documents by only allowing the latest
-    # completed document for each checksum. This keeps old PDFs out of reference citations.
-    if request.mode == "documents" and request.document_id is None:
-        active_document_ids = _get_active_document_ids(db, request.role)
-        if active_document_ids:
-            before_count = len(results)
-            results = [
-                result
-                for result in results
-                if _coerce_document_id((result.get("metadata") or {}).get("document_id")) in active_document_ids
-            ]
-            logger.info(
-                f"   ✅ Active document filter kept {len(results)}/{before_count} Pinecone results (latest completed per filename)"
-            )
-        else:
-            logger.warning("   ⚠️  No active documents found for filtering")
-
     # Defensive retry: if strict metadata filter yields zero, retry without filter
     # and apply filtering in app logic. This guards against metadata type mismatches.
     if not results and query_filter is not None:
@@ -596,6 +579,23 @@ async def chat_query(
         ]
         logger.info(f"   ✅ Filtered to {len(filtered_results)} results from target documents")
         results = filtered_results
+
+    # In all-documents mode, apply active-document filtering on the FINAL result set
+    # (after retries/fallbacks) so stale vectors cannot re-enter from retry queries.
+    if request.mode == "documents" and request.document_id is None:
+        active_document_ids = _get_active_document_ids(db, request.role)
+        if active_document_ids:
+            before_count = len(results)
+            results = [
+                result
+                for result in results
+                if _coerce_document_id((result.get("metadata") or {}).get("document_id")) in active_document_ids
+            ]
+            logger.info(
+                f"   ✅ Active document filter kept {len(results)}/{before_count} Pinecone results (latest completed per checksum)"
+            )
+        else:
+            logger.warning("   ⚠️  No active documents found for filtering")
 
     # If the user query mentions a specific document title or contains strong title tokens,
     # prefer documents whose title matches the query. Reorder `results` so matching
