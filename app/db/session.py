@@ -43,6 +43,18 @@ def _ensure_document_metadata_columns() -> None:
         statements.append("ALTER TABLE documents ADD COLUMN program_name VARCHAR")
     if "donor_name" not in existing_columns:
         statements.append("ALTER TABLE documents ADD COLUMN donor_name VARCHAR")
+    if "file_checksum" not in existing_columns:
+        statements.append("ALTER TABLE documents ADD COLUMN file_checksum VARCHAR")
+    if "ingestion_state" not in existing_columns:
+        statements.append("ALTER TABLE documents ADD COLUMN ingestion_state VARCHAR NOT NULL DEFAULT 'pending'")
+    if "ingestion_error" not in existing_columns:
+        statements.append("ALTER TABLE documents ADD COLUMN ingestion_error TEXT")
+    if "ingestion_started_at" not in existing_columns:
+        statements.append("ALTER TABLE documents ADD COLUMN ingestion_started_at TIMESTAMP")
+    if "ingestion_completed_at" not in existing_columns:
+        statements.append("ALTER TABLE documents ADD COLUMN ingestion_completed_at TIMESTAMP")
+    if "rolled_back_at" not in existing_columns:
+        statements.append("ALTER TABLE documents ADD COLUMN rolled_back_at TIMESTAMP")
 
     if not statements:
         return

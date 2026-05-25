@@ -75,7 +75,9 @@ async def health_check():
 @app.on_event("startup")
 async def startup_event():
     """Auto-ingest PDFs from ./data/pdfs folder if running locally."""
-    if config.LOCAL_MODE and config.ENABLE_FOLDER_INGESTION:
+    # Allow folder ingestion only in LOCAL_MODE or when explicitly allowed in production
+    allow_ingest = config.ENABLE_FOLDER_INGESTION and (config.LOCAL_MODE or config.ENABLE_FOLDER_INGESTION_ALLOW_PRODUCTION)
+    if allow_ingest:
         logger.info("\n" + "=" * 80)
         logger.info("📚 LOCAL MODE DETECTED - Auto-ingesting PDFs from ./data/pdfs")
         logger.info("=" * 80)
@@ -99,11 +101,11 @@ async def startup_event():
         
         except Exception as e:
             logger.error(f"❌ Folder ingestion failed: {e}", exc_info=True)
-    else:
-        if not config.LOCAL_MODE:
-            logger.info("🌍 Production mode - folder ingestion disabled")
-        elif not config.ENABLE_FOLDER_INGESTION:
-            logger.info("⏭️  Folder ingestion disabled by ENABLE_FOLDER_INGESTION=false")
+        else:
+            if not config.LOCAL_MODE:
+                logger.info("🌍 Production mode - folder ingestion disabled (ENABLE_FOLDER_INGESTION not explicitly allowed in production)")
+            elif not config.ENABLE_FOLDER_INGESTION:
+                logger.info("⏭️  Folder ingestion disabled by ENABLE_FOLDER_INGESTION=false")
 
 if __name__ == "__main__":
     import uvicorn

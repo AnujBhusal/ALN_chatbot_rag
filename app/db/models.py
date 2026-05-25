@@ -18,6 +18,12 @@ class Document(Base):
     year: int = Column(Integer, nullable=True, index=True)
     program_name: str = Column(String, nullable=True)
     donor_name: str = Column(String, nullable=True)
+    file_checksum: str = Column(String, nullable=True, unique=True, index=True)
+    ingestion_state: str = Column(String, nullable=False, default="pending", index=True)
+    ingestion_error: str = Column(Text, nullable=True)
+    ingestion_started_at: datetime = Column(DateTime, nullable=True)
+    ingestion_completed_at: datetime = Column(DateTime, nullable=True)
+    rolled_back_at: datetime = Column(DateTime, nullable=True)
     uploaded_at: datetime = Column(DateTime, default=datetime.utcnow)
 
     # Relationship with chunks

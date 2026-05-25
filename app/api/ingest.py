@@ -9,10 +9,12 @@ import logging
 import tempfile
 import shutil
 import io
+from pathlib import Path
 
 from app.services.chunking import ChunkingService
 from app.services.embeddings import EmbeddingService
 from app.services.vectorstore import VectorStoreService
+from app.services.ingestion_service import IngestionService
 from app.services.metadata import build_document_metadata, metadata_to_dict
 from app.db.session import get_db
 from app.db import models
@@ -31,6 +33,7 @@ router = APIRouter(prefix="/ingest", tags=["Ingestion"])
 chunker = ChunkingService()
 embedder = EmbeddingService()
 vectorstore = VectorStoreService()
+ingestion_service = IngestionService()
 
 
 def extract_text_from_file(file: UploadFile) -> str:
@@ -355,66 +358,38 @@ async def upload_document(
     if chunk_strategy not in ["sliding", "sentence"]:
         raise HTTPException(status_code=400, detail="chunk_strategy must be 'sliding' or 'sentence'")
     
+    temp_file = None
     try:
-        # Create metadata template
-        metadata = build_document_metadata(
-            filename=file.filename,
-            text="",  # Not available yet
+        # Save uploaded file to temp location first
+        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
+        shutil.copyfileobj(file.file, temp_file)
+        temp_file.close()
+        logger.info(f"   📁 Temp file: {temp_file.name}")
+        outcome = ingestion_service.ingest_pdf_path(
+            Path(temp_file.name),
+            chunk_strategy=chunk_strategy,
             document_type=document_type,
             title=title,
             year=_parse_optional_int(year),
             program_name=program_name,
             donor_name=donor_name,
-        )
-
-        # Create document record with "processing" status
-        document = models.Document(
+            source="upload",
             filename=file.filename,
-            filetype=file.content_type,
-            title=metadata.title,
-            document_type=metadata.document_type,
-            year=metadata.year,
-            program_name=metadata.program_name,
-            donor_name=metadata.donor_name,
+            filetype=file.content_type or "application/pdf",
         )
-        db.add(document)
-        db.commit()
-        db.refresh(document)
-        
-        logger.info(f"   ✅ Document registered (ID: {document.id})")
 
-        # Save uploaded file to temp location
-        temp_file = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
-        shutil.copyfileobj(file.file, temp_file)
-        temp_file.close()
-        logger.info(f"   📁 Temp file: {temp_file.name}")
+        logger.info(f"   ✅ Upload ingestion finished: {outcome.status}")
+        return outcome.to_dict()
 
-        # Start background processing thread
-        metadata_dict = metadata_to_dict(metadata)
-        bg_thread = threading.Thread(
-            target=_background_process_document,
-            args=(document.id, temp_file.name, chunk_strategy, metadata_dict, file.filename, file.content_type),
-            daemon=True
-        )
-        bg_thread.start()
-        logger.info(f"   ✅ Background processing started")
-
-        return {
-            "message": "Document uploaded and processing in background",
-            "document_id": document.id,
-            "status": "processing",
-            "metadata": {
-                "title": document.title,
-                "document_type": document.document_type,
-                "year": document.year,
-                "program_name": document.program_name,
-                "donor_name": document.donor_name,
-            },
-        }
-        
     except Exception as e:
         logger.error(f"   ❌ Error: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+    finally:
+        try:
+            if temp_file is not None:
+                os.remove(temp_file.name)
+        except Exception:
+            pass
 
 
 @router.delete("/cleanup-duplicates")
@@ -437,7 +412,8 @@ async def cleanup_duplicates(db: Session = Depends(get_db)) -> dict:
     # Find and delete duplicates
     deleted_doc_ids = []
     deleted_chunk_count = 0
-    pinecone_deleted_count = 0
+    # Track which docs were cleaned via id-based deletion
+    pinecone_deleted_docs: List[int] = []
     
     for title, docs in by_title.items():
         if len(docs) > 1:
@@ -446,26 +422,43 @@ async def cleanup_duplicates(db: Session = Depends(get_db)) -> dict:
             for old_doc in docs[:-1]:
                 logger.info(f"      Deleting ID {old_doc.id}")
                 deleted_doc_ids.append(old_doc.id)
-                # Delete chunks first
+                # Collect chunk ids to remove from vectorstore (use deterministic point ids)
                 chunks = db.query(models.DocumentChunk).filter(
                     models.DocumentChunk.document_id == old_doc.id
                 ).all()
+                chunk_ids = [c.id for c in chunks]
                 deleted_chunk_count += len(chunks)
+                # Delete chunk rows and document row from DB
                 for chunk in chunks:
                     db.delete(chunk)
                 db.delete(old_doc)
+                # After DB deletion, attempt to remove vectors by explicit ids
+                try:
+                    point_ids = [f"{old_doc.id}_{cid}" for cid in chunk_ids]
+                    vectorstore.delete_by_ids(point_ids)
+                    logger.info(f"   ✅ Deleted Pinecone vectors for document {old_doc.id} by ids")
+                    pinecone_deleted_docs.append(old_doc.id)
+                except Exception as e:
+                    logger.warning(f"   ⚠️  Pinecone id-based deletion failed for document {old_doc.id}: {e}")
     
     db.commit()
     
     # 🔥 NEW: Delete vectors from Pinecone for all deleted documents
     logger.info(f"📤 Cleaning up Pinecone vectors for {len(deleted_doc_ids)} documents...")
+    # For any documents that were NOT cleaned by id-based deletion, try metadata-based deletion
+    fallback_attempts = 0
     for doc_id in deleted_doc_ids:
+        if doc_id in pinecone_deleted_docs:
+            continue
         try:
             vectorstore.delete_by_document_id(doc_id)
-            pinecone_deleted_count += 1
-            logger.info(f"   ✅ Deleted Pinecone vectors for document {doc_id}")
+            pinecone_deleted_docs.append(doc_id)
+            fallback_attempts += 1
+            logger.info(f"   ✅ Fallback-deleted Pinecone vectors for document {doc_id}")
         except Exception as e:
-            logger.warning(f"   ⚠️  Pinecone deletion failed for document {doc_id}: {e}")
+            logger.warning(f"   ⚠️  Pinecone fallback deletion failed for document {doc_id}: {e}")
+
+    pinecone_deleted_count = len(pinecone_deleted_docs)
     
     logger.info(f"✅ Cleanup complete: Deleted {len(deleted_doc_ids)} documents, {deleted_chunk_count} chunks, {pinecone_deleted_count} Pinecone syncs")
     
@@ -527,28 +520,36 @@ async def delete_document(document_id: int, db: Session = Depends(get_db)) -> di
         
         logger.info(f"🗑️  Deleting document {document_id}: {document.title}")
         
-        # Delete chunks first
+        # Delete chunks first (collect chunk ids for vector deletion)
         chunks = db.query(models.DocumentChunk).filter(
             models.DocumentChunk.document_id == document_id
         ).all()
-        
+
+        chunk_ids = [c.id for c in chunks]
         chunk_count = len(chunks)
         for chunk in chunks:
             db.delete(chunk)
-        
+
         # Delete document
         db.delete(document)
         db.commit()
-        
-        # 🔥 NEW: Delete vectors from Pinecone
-        logger.info(f"📤 Cleaning up Pinecone vectors...")
+
+        # Try id-based Pinecone deletion first (deterministic)
+        logger.info(f"📤 Cleaning up Pinecone vectors for document {document_id} by ids...")
         try:
-            vectorstore.delete_by_document_id(document_id)
-            logger.info(f"   ✅ Deleted Pinecone vectors for document {document_id}")
+            point_ids = [f"{document_id}_{cid}" for cid in chunk_ids]
+            vectorstore.delete_by_ids(point_ids)
+            logger.info(f"   ✅ Deleted Pinecone vectors for document {document_id} by explicit ids")
             pinecone_status = "cleaned"
         except Exception as e:
-            logger.warning(f"   ⚠️  Pinecone deletion failed: {e}")
-            pinecone_status = "failed"
+            logger.warning(f"   ⚠️  Pinecone id-based deletion failed: {e}, falling back to metadata filter")
+            try:
+                vectorstore.delete_by_document_id(document_id)
+                logger.info(f"   ✅ Deleted Pinecone vectors for document {document_id} via filter")
+                pinecone_status = "cleaned"
+            except Exception as e:
+                logger.warning(f"   ⚠️  Pinecone deletion failed: {e}")
+                pinecone_status = "failed"
         
         logger.info(f"✅ Deleted document {document_id} ({chunk_count} chunks removed) - Pinecone: {pinecone_status}")
         

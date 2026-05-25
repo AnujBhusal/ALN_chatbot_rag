@@ -106,9 +106,12 @@ class VectorStoreService:
                 vectors.append({"id": point_id, "values": emb, "metadata": meta})
             
             logger.info(f"   📤 Upserting {len(vectors)} vectors to Pinecone...")
-            logger.debug(f"      - First vector ID: {vectors[0]['id'] if vectors else 'N/A'}")
-            logger.debug(f"      - Embedding dimension: {len(vectors[0]['values']) if vectors else 0}")
-            logger.debug(f"      - Sample metadata: {vectors[0]['metadata'] if vectors else {}}")
+            if vectors:
+                ids_preview = [v['id'] for v in vectors[:20]]
+                logger.debug(f"      - Point IDs (preview): {ids_preview}")
+                logger.debug(f"      - First vector ID: {vectors[0]['id']}")
+                logger.debug(f"      - Embedding dimension: {len(vectors[0]['values'])}")
+                logger.debug(f"      - Sample metadata: {vectors[0]['metadata']}")
             
             self.index.upsert(vectors=vectors, namespace=self.namespace)
             logger.info(f"      ✅ Successfully upserted {len(vectors)} embeddings")
@@ -162,3 +165,37 @@ class VectorStoreService:
         except Exception as e:
             logger.error(f"Error deleting document vectors: {e}")
             raise
+
+    def delete_by_ids(self, ids: List[str]):
+        """Delete vectors by their explicit Pinecone IDs (safe and deterministic)."""
+        if not self._ensure_connected():
+            logger.warning("Pinecone not available, skipping id-based deletion")
+            return
+
+        try:
+            if not ids:
+                logger.info("No IDs provided to delete_by_ids")
+                return
+            # Ensure all ids are strings
+            str_ids = [str(i) for i in ids]
+            self.index.delete(ids=str_ids, namespace=self.namespace)
+            logger.info(f"Deleted {len(str_ids)} vectors by explicit ids")
+        except Exception as e:
+            logger.error(f"Error deleting vectors by ids: {e}")
+            raise
+
+    def fetch_by_ids(self, ids: List[str]) -> Dict[str, Any]:
+        """Fetch vectors by explicit ids for verification."""
+        if not self._ensure_connected():
+            logger.warning("Pinecone not available, skipping fetch")
+            return {}
+
+        try:
+            if not ids:
+                return {}
+            res = self.index.fetch(ids=[str(i) for i in ids], namespace=self.namespace)
+            vectors = res.get("vectors", {}) if isinstance(res, dict) else getattr(res, "vectors", {})
+            return vectors or {}
+        except Exception as e:
+            logger.error(f"Error fetching vectors by ids: {e}")
+            return {}
