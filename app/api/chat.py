@@ -234,7 +234,7 @@ def _build_document_context(document: Optional[models.Document]) -> Optional[Dic
 
 
 def _get_active_document_ids(db: Session, role: str) -> set[int]:
-    """Return the latest completed document for each filename so stale duplicates are ignored."""
+    """Return the latest completed document for each checksum so stale duplicates are ignored."""
     docs = (
         db.query(models.Document)
         .filter(models.Document.ingestion_state == "completed")
@@ -243,15 +243,21 @@ def _get_active_document_ids(db: Session, role: str) -> set[int]:
     )
 
     active_ids: set[int] = set()
-    seen_filenames: set[str] = set()
+    seen_keys: set[str] = set()
     for doc in docs:
         if not can_access_document_type(role, doc.document_type):
             continue
 
-        filename_key = (doc.filename or doc.title or str(doc.id)).strip().lower()
-        if filename_key in seen_filenames:
+        dedupe_key = (
+            (doc.file_checksum or "")
+            or (doc.filename or "")
+            or (doc.title or "")
+            or str(doc.id)
+        ).strip().lower()
+
+        if dedupe_key in seen_keys:
             continue
-        seen_filenames.add(filename_key)
+        seen_keys.add(dedupe_key)
         active_ids.add(doc.id)
 
     return active_ids
@@ -547,7 +553,7 @@ async def chat_query(
         logger.debug("   ⚠️  Could not log raw vector matches")
 
     # In all-documents mode, ignore stale duplicate documents by only allowing the latest
-    # completed document for each filename. This keeps old PDFs out of reference citations.
+    # completed document for each checksum. This keeps old PDFs out of reference citations.
     if request.mode == "documents" and request.document_id is None:
         active_document_ids = _get_active_document_ids(db, request.role)
         if active_document_ids:
