@@ -404,10 +404,15 @@ async def cleanup_duplicates(db: Session = Depends(get_db)) -> dict:
     documents = db.query(models.Document).order_by(models.Document.uploaded_at).all()
     logger.info(f"🔍 Found {len(documents)} total documents")
     
-    # Group by title
+    # Group by checksum first (strong dedupe), fallback to normalized title
     by_title = defaultdict(list)
     for doc in documents:
-        by_title[doc.title].append(doc)
+        if doc.file_checksum:
+            dedupe_key = f"checksum:{doc.file_checksum.strip().lower()}"
+        else:
+            normalized_title = re.sub(r"\s+", " ", (doc.title or "").strip().lower())
+            dedupe_key = f"title:{normalized_title}"
+        by_title[dedupe_key].append(doc)
     
     # Find and delete duplicates
     deleted_doc_ids = []
@@ -415,11 +420,21 @@ async def cleanup_duplicates(db: Session = Depends(get_db)) -> dict:
     # Track which docs were cleaned via id-based deletion
     pinecone_deleted_docs: List[int] = []
     
-    for title, docs in by_title.items():
+    for dedupe_key, docs in by_title.items():
         if len(docs) > 1:
-            logger.info(f"   ⚠️  Found {len(docs)} duplicates for '{title}'")
-            # Keep the latest, delete older ones
-            for old_doc in docs[:-1]:
+            logger.info(f"   ⚠️  Found {len(docs)} duplicates for '{dedupe_key}'")
+            # Prefer keeping the latest completed document; otherwise keep latest overall
+            sorted_docs = sorted(
+                docs,
+                key=lambda d: (
+                    1 if getattr(d, "ingestion_state", None) == "completed" else 0,
+                    d.uploaded_at or 0,
+                    d.id,
+                ),
+                reverse=True,
+            )
+            keep_doc = sorted_docs[0]
+            for old_doc in sorted_docs[1:]:
                 logger.info(f"      Deleting ID {old_doc.id}")
                 deleted_doc_ids.append(old_doc.id)
                 # Collect chunk ids to remove from vectorstore (use deterministic point ids)
@@ -439,7 +454,9 @@ async def cleanup_duplicates(db: Session = Depends(get_db)) -> dict:
                     logger.info(f"   ✅ Deleted Pinecone vectors for document {old_doc.id} by ids")
                     pinecone_deleted_docs.append(old_doc.id)
                 except Exception as e:
-                    logger.warning(f"   ⚠️  Pinecone id-based deletion failed for document {old_doc.id}: {e}")
+                        logger.warning(f"   ⚠️  Pinecone id-based deletion failed for document {old_doc.id}: {e}")
+
+                    logger.info(f"      Keeping ID {keep_doc.id} for key '{dedupe_key}'")
     
     db.commit()
     

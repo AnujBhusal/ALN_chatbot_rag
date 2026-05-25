@@ -235,6 +235,12 @@ def _build_document_context(document: Optional[models.Document]) -> Optional[Dic
 
 def _get_active_document_ids(db: Session, role: str) -> set[int]:
     """Return the latest completed document for each checksum so stale duplicates are ignored."""
+    chunk_doc_ids = {
+        doc_id
+        for (doc_id,) in db.query(models.DocumentChunk.document_id).distinct().all()
+        if doc_id is not None
+    }
+
     docs = (
         db.query(models.Document)
         .filter(models.Document.ingestion_state == "completed")
@@ -247,13 +253,15 @@ def _get_active_document_ids(db: Session, role: str) -> set[int]:
     for doc in docs:
         if not can_access_document_type(role, doc.document_type):
             continue
+        if doc.id not in chunk_doc_ids:
+            continue
 
-        dedupe_key = (
-            (doc.file_checksum or "")
-            or (doc.filename or "")
-            or (doc.title or "")
-            or str(doc.id)
-        ).strip().lower()
+        if doc.file_checksum:
+            dedupe_key = doc.file_checksum.strip().lower()
+        else:
+            title_key = (doc.title or "").strip().lower()
+            title_key = re.sub(r"\s+", " ", title_key)
+            dedupe_key = title_key or str(doc.id)
 
         if dedupe_key in seen_keys:
             continue
