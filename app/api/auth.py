@@ -19,6 +19,7 @@ ALLOWED_AUTH_EMAILS = {
     "maharjanroshan67@gmail.com",
     "anujbhusal4@gmail.com",
     "karkishubha985@gmail.com",
+    "aln123@gmail.com",
 }
 
 
